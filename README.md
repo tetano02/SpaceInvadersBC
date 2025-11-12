@@ -32,12 +32,13 @@ This environment maintains visual control and temporal dynamics similar to Pac-M
 We expect the agent trained with DAgger to outperform the Behavioral Cloning baseline, particularly in handling previously unseen game states and improving robustness.
 
 ## Group Information
-**Group Name:** *to be added*  
-**Members:** *names of the 4 participants*  
+**Group Name:** CTRL+C - CTRL+PAC
+**Members:** Agnelli Stefano, Cremonesi Andrea, Mombelli Tommaso, Sun Wen Wen
 
 ## Project Deliverables
 - Source Code (Jupyter Notebook or Python files)  
 - Report (PDF with analysis and results)  
 - Presentation Slides (PDF)  
+
 
 
