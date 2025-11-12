@@ -4,11 +4,11 @@
 This project is part of the **Social Robotics – MU5EEH15 (2025/2026)** course. 
 It focuses on developing an **interactive imitation learning framework**, combining **Behavioral Cloning** and **DAgger**, aligned with the course objective of exploring human-in-the-loop reinforcement learning.
 
-## Project Description
-Our initial plan was to use the **Pac-Man (ALE/Pacman-v5)** environment from Gymnasium, as it provides a visually intuitive and partially stochastic scenario (due to ghost movement).  
+## Project Description - Phases (To be updated while the project progress)
+ - Our initial plan was to use the **Pac-Man (ALE/Pacman-v5)** environment from Gymnasium, as it provides a visually intuitive and partially stochastic scenario (due to ghost movement).  
 However, we realized that the **state space of Pac-Man is highly complex and high-dimensional**, making it challenging to collect and manage demonstrations effectively in our current setup.  
 
-To simplify training and facilitate faster experimentation, we decided to switch to the **Space Invaders (ALE/SpaceInvaders-v5)** environment.  
+- To simplify training and facilitate faster experimentation, we decided to switch to the **Space Invaders (ALE/SpaceInvaders-v5)** environment.  
 This environment maintains visual control and temporal dynamics similar to Pac-Man, while offering a **more manageable observation space**, allowing us to focus on the imitation learning aspects rather than extensive state abstraction.
 
 ## Objectives
@@ -34,6 +34,7 @@ We expect the agent trained with DAgger to outperform the Behavioral Cloning bas
 ## Group Information
 **Group Name:** CTRL+C - CTRL+PAC
 **Members:** Agnelli Stefano, Cremonesi Andrea, Mombelli Tommaso, Sun Wen Wen
+
 
 
 
