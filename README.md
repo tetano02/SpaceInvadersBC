@@ -35,10 +35,5 @@ We expect the agent trained with DAgger to outperform the Behavioral Cloning bas
 **Group Name:** CTRL+C - CTRL+PAC
 **Members:** Agnelli Stefano, Cremonesi Andrea, Mombelli Tommaso, Sun Wen Wen
 
-## Project Deliverables
-- Source Code (Jupyter Notebook or Python files)  
-- Report (PDF with analysis and results)  
-- Presentation Slides (PDF)  
-
 
 
