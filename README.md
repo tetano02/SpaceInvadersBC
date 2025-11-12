@@ -1,7 +1,7 @@
 ﻿# CTRLC-CTRLPAC - Interactive Imitation Learning Project
 
 ## Overview
-This project is part of the **Social Robotics – MU5EEH15 (2025/2026)** course, supervised by **Silvia Tulli, Mohamed Chetouani, and Louis Simon**.  
+This project is part of the **Social Robotics – MU5EEH15 (2025/2026)** course. 
 It focuses on developing an **interactive imitation learning framework**, combining **Behavioral Cloning** and **DAgger**, aligned with the course objective of exploring human-in-the-loop reinforcement learning.
 
 ## Project Description
@@ -39,4 +39,5 @@ We expect the agent trained with DAgger to outperform the Behavioral Cloning bas
 - Source Code (Jupyter Notebook or Python files)  
 - Report (PDF with analysis and results)  
 - Presentation Slides (PDF)  
+
 
