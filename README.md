@@ -36,6 +36,11 @@ This environment maintains visual control and temporal dynamics similar to Pac-M
 - **Minari** – Dataset handling for offline RL and imitation learning  
 - **Custom Keyboard Teleoperation Script** – For demonstration collection  
 
+### Minari dataset storage
+- Durante l'esecuzione di `load_minari_dataset.py` il progetto imposta automaticamente la variabile `MINARI_DATASETS_PATH` su `data/minari_datasets/`.  
+- Se vuoi usare un percorso diverso, definisci `MINARI_DATASETS_PATH` prima di avviare lo script; il valore personalizzato verrà rispettato.  
+- La cartella viene creata automaticamente e rimane versionata solo localmente (è ignorata da git), così i dataset scaricati non escono dal repository.
+
 ## Expected Results
 We expect the agent trained with DAgger to outperform the Behavioral Cloning baseline, particularly in handling previously unseen game states and improving robustness.
 
