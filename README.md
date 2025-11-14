@@ -39,6 +39,15 @@ This environment maintains visual control and temporal dynamics similar to Pac-M
 ## Expected Results
 We expect the agent trained with DAgger to outperform the Behavioral Cloning baseline, particularly in handling previously unseen game states and improving robustness.
 
+## Metrics Export
+Every Behavioral Cloning run now produces a synchronized CSV report in `data/metrics/`. Each file groups three sections:
+
+- **Metadata:** environment name, training/evaluation IDs, datetime, number/names of demonstrations, dataset split, epoch/batch parameters, and total training duration.
+- **Epoch Metrics:** per-epoch train/validation loss and accuracy so the plots can be replicated or post-processed without screenshots.
+- **Evaluation:** when `evaluate_bc.py` is executed, the corresponding CSV is automatically appended with summary statistics and per-episode rewards/lengths.
+
+The CSV shares the same timestamp/ID used for the model checkpoint and plots, making it easy to trace back the assets belonging to the same experiment.
+
 ## Group Information
 **Group Name:** CTRL+C - CTRL+PAC
 **Members:** Agnelli Stefano, Cremonesi Andrea, Mombelli Tommaso, Sun Wen Wen

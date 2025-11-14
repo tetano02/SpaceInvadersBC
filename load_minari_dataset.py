@@ -4,9 +4,7 @@ Script per caricare e verificare dataset esperti da Minari.
 import minari
 import numpy as np
 from pathlib import Path
-import pickle
-from datetime import datetime
-from utils import get_next_demonstration_id
+from data_manager import DataManager
 
 
 def list_available_datasets():
@@ -149,29 +147,28 @@ def convert_minari_to_demonstrations(dataset, max_episodes=None):
     return demonstrations
 
 
-def save_demonstrations(demonstrations, dataset_name):
-    """Salva le dimostrazioni convertite."""
-    data_dir = Path('data/demonstrations')
-    data_dir.mkdir(parents=True, exist_ok=True)
-    
-    demo_id = get_next_demonstration_id()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"demonstrations_{demo_id:03d}_{timestamp}_minari_{dataset_name}.pkl"
-    filepath = data_dir / filename
-    
-    data = {
-        'demonstrations': demonstrations,
-        'num_episodes': len(demonstrations),
-        'total_steps': sum(len(ep['actions']) for ep in demonstrations),
-        'timestamp': datetime.now().isoformat(),
-        'source': f'minari:{dataset_name}'
-    }
-    
-    with open(filepath, 'wb') as f:
-        pickle.dump(data, f)
-    
-    print(f"\n✓ Dimostrazioni salvate in: {filepath}")
-    return filepath
+def save_demonstrations(demonstrations, dataset_name, source=None, custom_id=None, data_manager=None):
+    """Salva le dimostrazioni convertite usando DataManager."""
+    data_manager = data_manager or DataManager()
+    resolved_source = source or f'minari_{dataset_name}'
+    return data_manager.save_demonstrations(
+        demonstrations=demonstrations,
+        filename=None,
+        source=resolved_source,
+        custom_id=custom_id
+    )
+
+
+def demonstration_exists(custom_id, data_manager=None):
+    """Verifica se esistono già dimostrazioni salvate con l'ID specificato."""
+    data_manager = data_manager or DataManager()
+    pattern = f"dem_*_{custom_id}.pkl"
+    existing_files = sorted(data_manager.demonstrations_dir.glob(pattern))
+    if existing_files:
+        print(f"\n⚠ Dimostrazioni con ID '{custom_id}' già presenti:")
+        for file in existing_files:
+            print(f"  - {file}")
+    return existing_files
 
 
 def main():
@@ -180,67 +177,42 @@ def main():
     print("CARICAMENTO DATASET MINARI PER BEHAVIORAL CLONING")
     print("="*60)
     
-    # Lista dataset disponibili
-    local_datasets, remote_datasets = list_available_datasets()
+    dataset_id = "atari/spaceinvaders/expert-v0"
+    dataset_name = "spaceinvaders_expert"
     
-    # Menu
-    print("\n" + "-"*60)
-    print("OPZIONI:")
-    print("-"*60)
-    print("1. Verifica dataset specifico")
-    print("2. Scarica 'atari/spaceinvaders/expert-v0'")
-    print("3. Carica e converti 'atari/spaceinvaders/expert-v0'")
-    print("4. Scarica dataset custom")
-    print("0. Esci")
+    print(f"\nTarget dataset: {dataset_id}")
+    local_datasets, _ = list_available_datasets()
     
-    choice = input("\nScelta: ").strip()
-    
-    if choice == '1':
-        dataset_id = input("\nInserisci ID dataset: ").strip()
-        check_dataset_info(dataset_id)
-    
-    elif choice == '2':
-        dataset_id = "atari/spaceinvaders/expert-v0"
-        download_dataset(dataset_id)
-    
-    elif choice == '3':
-        dataset_id = "atari/spaceinvaders/expert-v0"
-        
-        # Verifica se è già scaricato
-        local_datasets, _ = list_available_datasets()
-        if dataset_id not in local_datasets:
-            print(f"\n⚠ Dataset non trovato localmente. Download in corso...")
-            if not download_dataset(dataset_id):
-                print("\n❌ Impossibile procedere senza il dataset.")
-                return
-        
-        # Carica dataset
-        dataset = check_dataset_info(dataset_id)
-        if dataset is None:
+    if dataset_id not in local_datasets:
+        print(f"\n⚠ Dataset non trovato localmente. Avvio download automatico...")
+        if not download_dataset(dataset_id):
+            print("\n❌ Impossibile completare il flusso senza il dataset richiesto.")
             return
-        
-        # Chiedi quanti episodi convertire
-        max_episodes = input(f"\nQuanti episodi convertire? [default: tutti ({dataset.total_episodes})]: ").strip()
-        max_episodes = int(max_episodes) if max_episodes else None
-        
-        # Converti
-        demonstrations = convert_minari_to_demonstrations(dataset, max_episodes)
-        
-        # Salva
-        save_demonstrations(demonstrations, "spaceinvaders_expert")
-        
-        print("\n✓ Operazione completata! Puoi ora usare questi dati per il training.")
+    else:
+        print("\n✓ Dataset già disponibile localmente.")
     
-    elif choice == '4':
-        dataset_id = input("\nInserisci ID dataset da scaricare: ").strip()
-        download_dataset(dataset_id)
-    
-    elif choice == '0':
-        print("\nArrivederci!")
+    data_manager = DataManager()
+    if demonstration_exists('minari', data_manager=data_manager):
+        print("\n✓ Dimostrazioni già convertite. Salto la riconversione.")
+        return
+
+    dataset = check_dataset_info(dataset_id)
+    if dataset is None:
+        print("\n❌ Impossibile convertire il dataset.")
         return
     
-    else:
-        print("\n⚠ Scelta non valida!")
+    demonstrations = convert_minari_to_demonstrations(dataset)
+    save_path, _ = save_demonstrations(
+        demonstrations,
+        dataset_name,
+        source='minari',
+        custom_id='minari',
+        data_manager=data_manager
+    )
+    
+    if save_path:
+        print(f"\n✓ Dimostrazioni salvate in: {save_path}")
+    print("\nOperazione completata! Puoi ora usare questi dati per il training.")
 
 
 if __name__ == "__main__":

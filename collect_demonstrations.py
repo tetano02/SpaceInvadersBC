@@ -4,12 +4,10 @@ Usa i tasti freccia per muoverti e SPAZIO per sparare.
 """
 import gymnasium as gym
 import numpy as np
-import pickle
-from datetime import datetime
 from pathlib import Path
 import pygame
 from env_make import make_space_invaders_env
-from utils import get_next_demonstration_id
+from data_manager import DataManager
 
 
 class DemonstrationCollector:
@@ -154,36 +152,13 @@ class DemonstrationCollector:
         return self.demonstrations
     
     def save_demonstrations(self, filename=None):
-        """Salva le dimostrazioni su file."""
-        if not self.demonstrations:
-            print("Nessuna dimostrazione da salvare!")
-            return
-        
-        # Crea directory per i dati
-        data_dir = Path('data/demonstrations')
-        data_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Nome file con ID incrementale e timestamp
-        if filename is None:
-            demo_id = get_next_demonstration_id()
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"demonstrations_{demo_id:03d}_{timestamp}.pkl"
-        
-        filepath = data_dir / filename
-        
-        # Salva i dati
-        data = {
-            'demonstrations': self.demonstrations,
-            'num_episodes': len(self.demonstrations),
-            'total_steps': sum(len(ep['actions']) for ep in self.demonstrations),
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        with open(filepath, 'wb') as f:
-            pickle.dump(data, f)
-        
-        print(f"\n✓ Dimostrazioni salvate in: {filepath}")
-        return filepath
+        """Salva le dimostrazioni su file usando DataManager."""
+        data_manager = DataManager()
+        return data_manager.save_demonstrations(
+            demonstrations=self.demonstrations,
+            filename=filename,
+            source='manual'
+        )
 
 
 def main():

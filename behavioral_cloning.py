@@ -6,12 +6,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import numpy as np
-import pickle
 from pathlib import Path
 from datetime import datetime
-import matplotlib.pyplot as plt
-from utils import get_next_model_id, get_next_plot_id
+from data_manager import DataManager
 
 
 class BCDataset(Dataset):
@@ -102,7 +99,27 @@ class BCTrainer:
         self.train_accuracies = []
         self.val_accuracies = []
         
+        # Inizializza DataManager
+        self.data_manager = DataManager()
+        
+        # Memorizza timestamp e id per sincronizzazione con plot
+        self.last_save_timestamp = None
+        self.last_save_id = None
+
+        # Informazioni della run
+        self.run_timestamp, self.run_id = self.data_manager.create_run_identifier()
+        self.metrics_csv_path = self.data_manager.get_metrics_filepath(self.run_timestamp, self.run_id)
+        self.run_metadata = {}
+        self.run_start_time = None
+        self.run_end_time = None
+        
         print(f"Usando device: {device}")
+
+    def configure_run(self, metadata):
+        """Configura le informazioni della run (ambiente, dataset, ecc.)."""
+        if metadata is None:
+            metadata = {}
+        self.run_metadata.update(metadata)
     
     def train_epoch(self, train_loader):
         """Addestra per una epoch."""
@@ -165,6 +182,7 @@ class BCTrainer:
         print(f"\n{'='*50}")
         print("INIZIO TRAINING")
         print(f"{'='*50}")
+        self.run_start_time = datetime.now()
         
         best_val_loss = float('inf')
         
@@ -193,64 +211,105 @@ class BCTrainer:
         print("TRAINING COMPLETATO")
         print(f"Miglior validation loss: {best_val_loss:.4f}")
         print(f"{'='*50}\n")
+        self.run_end_time = datetime.now()
+        self._export_training_metrics(num_epochs)
         
-        # Plot risultati
+        # Plot risultati (usa timestamp e id dell'ultimo salvataggio)
         self.plot_training_history()
+
+    def _export_training_metrics(self, num_epochs):
+        """Salva su CSV metadati e metriche della run."""
+        if self.run_start_time is None or self.run_end_time is None:
+            return
+        duration = (self.run_end_time - self.run_start_time).total_seconds()
+        demo_files = [Path(f).name if isinstance(f, (str, Path)) else str(f) for f in self.run_metadata.get('demonstration_files', [])]
+        metadata_rows = {
+            'run_id': f"{self.run_timestamp}_{self.run_id}",
+            'run_timestamp': self.run_timestamp,
+            'training_datetime': self.run_start_time.isoformat(),
+            'training_end_datetime': self.run_end_time.isoformat(),
+            'training_duration_seconds': round(duration, 2),
+            'environment_name': self.run_metadata.get('environment_name', 'unknown'),
+            'training_type': self.run_metadata.get('training_type', 'behavioral_cloning'),
+            'num_epochs': num_epochs,
+            'batch_size': self.run_metadata.get('batch_size'),
+            'total_dataset_samples': self.run_metadata.get('total_samples'),
+            'num_training_samples': self.run_metadata.get('train_samples'),
+            'num_validation_samples': self.run_metadata.get('val_samples'),
+            'val_split': self.run_metadata.get('val_split'),
+            'num_demonstration_files': len(demo_files),
+            'num_demonstrations': self.run_metadata.get('num_demonstrations'),
+            'demonstration_files': ' | '.join(demo_files) if demo_files else 'N/A',
+            'model_checkpoint': f"mod_{self.run_timestamp}_{self.run_id}.pth",
+            'metrics_csv_path': str(self.metrics_csv_path)
+        }
+        epoch_metrics = []
+        for idx in range(num_epochs):
+            if idx >= len(self.train_losses):
+                break
+            epoch_metrics.append({
+                'epoch': idx + 1,
+                'train_loss': round(self.train_losses[idx], 6),
+                'train_accuracy': round(self.train_accuracies[idx], 3),
+                'val_loss': round(self.val_losses[idx], 6),
+                'val_accuracy': round(self.val_accuracies[idx], 3)
+            })
+        self.metrics_csv_path = self.data_manager.save_training_csv(
+            run_timestamp=self.run_timestamp,
+            run_id=self.run_id,
+            metadata=metadata_rows,
+            epoch_metrics=epoch_metrics,
+            target_path=self.metrics_csv_path
+        )
     
     def plot_training_history(self):
-        """Plotta loss e accuracy durante training."""
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-        
-        # Loss
-        ax1.plot(self.train_losses, label='Train Loss')
-        ax1.plot(self.val_losses, label='Validation Loss')
-        ax1.set_xlabel('Epoch')
-        ax1.set_ylabel('Loss')
-        ax1.set_title('Training and Validation Loss')
-        ax1.legend()
-        ax1.grid(True)
-        
-        # Accuracy
-        ax2.plot(self.train_accuracies, label='Train Accuracy')
-        ax2.plot(self.val_accuracies, label='Validation Accuracy')
-        ax2.set_xlabel('Epoch')
-        ax2.set_ylabel('Accuracy (%)')
-        ax2.set_title('Training and Validation Accuracy')
-        ax2.legend()
-        ax2.grid(True)
-        
-        plt.tight_layout()
-        
-        # Salva plot
-        plot_dir = Path('data/plots')
-        plot_dir.mkdir(parents=True, exist_ok=True)
-        plot_id = get_next_plot_id()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        plt.savefig(plot_dir / f'training_history_{plot_id:03d}_{timestamp}.png')
-        print(f"Plot salvato in: {plot_dir / f'training_history_{plot_id:03d}_{timestamp}.png'}")
-        plt.show()
+        """Plotta loss e accuracy durante training usando DataManager.
+        Usa timestamp e ID dell'ultimo modello salvato per sincronizzazione."""
+        return self.data_manager.save_training_plot(
+            train_losses=self.train_losses,
+            val_losses=self.val_losses,
+            train_accuracies=self.train_accuracies,
+            val_accuracies=self.val_accuracies,
+            model_timestamp=self.last_save_timestamp,
+            model_id=self.last_save_id
+        )
     
-    def save_model(self, filename):
-        """Salva il modello."""
-        model_dir = Path('data/models')
-        model_dir.mkdir(parents=True, exist_ok=True)
+    def save_model(self, filename=None):
+        """Salva il modello usando DataManager.
+        Memorizza timestamp e ID per sincronizzazione con i plot."""
+        metadata = {
+            'run_timestamp': self.run_timestamp,
+            'run_id': self.run_id,
+            'metrics_csv_path': str(self.metrics_csv_path)
+        }
+        save_kwargs = dict(
+            model_state_dict=self.policy.state_dict(),
+            optimizer_state_dict=self.optimizer.state_dict(),
+            train_losses=self.train_losses,
+            val_losses=self.val_losses,
+            train_accuracies=self.train_accuracies,
+            val_accuracies=self.val_accuracies,
+            metadata=metadata
+        )
+        if filename is None:
+            save_kwargs.update({
+                'custom_timestamp': self.run_timestamp,
+                'custom_id': self.run_id
+            })
+        else:
+            save_kwargs['filename'] = filename
+        filepath, timestamp, model_id = self.data_manager.save_model(**save_kwargs)
         
-        filepath = model_dir / filename
-        torch.save({
-            'model_state_dict': self.policy.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'train_losses': self.train_losses,
-            'val_losses': self.val_losses,
-            'train_accuracies': self.train_accuracies,
-            'val_accuracies': self.val_accuracies,
-        }, filepath)
+        # Salva timestamp e id per sincronizzazione con plot
+        if timestamp is not None and model_id is not None:
+            self.last_save_timestamp = timestamp
+            self.last_save_id = model_id
         
-        print(f"Modello salvato in: {filepath}")
+        return filepath
     
     def load_model(self, filename):
-        """Carica il modello."""
-        filepath = Path('data/models') / filename
-        checkpoint = torch.load(filepath, map_location=self.device)
+        """Carica il modello usando DataManager."""
+        checkpoint = self.data_manager.load_model(filename, device=self.device)
         
         self.policy.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -260,15 +319,12 @@ class BCTrainer:
             self.val_losses = checkpoint['val_losses']
             self.train_accuracies = checkpoint['train_accuracies']
             self.val_accuracies = checkpoint['val_accuracies']
-        
-        print(f"Modello caricato da: {filepath}")
 
 
 def load_demonstrations(filepath):
-    """Carica dimostrazioni da file."""
-    with open(filepath, 'rb') as f:
-        data = pickle.load(f)
-    return data['demonstrations']
+    """Carica dimostrazioni da file usando DataManager."""
+    data_manager = DataManager()
+    return data_manager.load_demonstrations(filepath)
 
 
 def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=0.2):
@@ -296,14 +352,25 @@ def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=
     # Crea modello e trainer
     policy = BCPolicy(num_actions=6)
     trainer = BCTrainer(policy)
+    environment_name = 'ALE/SpaceInvaders-v5'
+    trainer.configure_run({
+        'environment_name': environment_name,
+        'training_type': 'behavioral_cloning',
+        'demonstration_files': [str(Path(demonstrations_file))],
+        'num_demonstrations': len(demonstrations),
+        'num_epochs': num_epochs,
+        'batch_size': batch_size,
+        'val_split': val_split,
+        'train_samples': train_size,
+        'val_samples': val_size,
+        'total_samples': len(full_dataset)
+    })
     
     # Addestra
     trainer.train(train_loader, val_loader, num_epochs=num_epochs)
     
-    # Salva modello finale
-    model_id = get_next_model_id()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    trainer.save_model(f'bc_model_{model_id:03d}_{timestamp}.pth')
+    # Salva modello finale (senza filename, userà il nuovo formato automatico)
+    trainer.save_model()
     
     return trainer.policy
 

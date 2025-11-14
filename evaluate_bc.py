@@ -4,8 +4,56 @@ Script per valutare e visualizzare la policy appresa con Behavioral Cloning.
 import torch
 import numpy as np
 from pathlib import Path
+from datetime import datetime
+from typing import Optional
 from env_make import make_space_invaders_env
 from behavioral_cloning import BCPolicy
+from data_manager import DataManager
+
+
+def _format_model_entry(model_path: Path, index: int) -> str:
+    """Restituisce una stringa leggibile con info sul modello."""
+    try:
+        modified = datetime.fromtimestamp(model_path.stat().st_mtime)
+        modified_str = modified.strftime("%Y-%m-%d %H:%M:%S")
+    except OSError:
+        modified_str = "N/A"
+    tag = "BEST" if model_path.name == 'best_model.pth' else ""
+    tag_display = f" [{tag}]" if tag else ""
+    return f"{index}. {model_path.name}{tag_display} (ultimo update: {modified_str})"
+
+
+def select_model_file(data_manager: DataManager, preselected_index: Optional[int] = None) -> Optional[Path]:
+    """Permette all'utente di scegliere un modello disponibile in data/models."""
+    models = data_manager.list_models()
+    if not models:
+        print("Errore: Nessun modello trovato in data/models. Esegui prima l'addestramento.")
+        return None
+    print("\n=== MODELLI DISPONIBILI ===")
+    for idx, model_path in enumerate(models, start=1):
+        print(_format_model_entry(model_path, idx))
+    print("Digita il numero del modello da valutare oppure 'q' per uscire. [ENTER = 1]")
+    while True:
+        if preselected_index is not None:
+            user_input = str(preselected_index)
+            preselected_index = None
+            print(f"Selezione automatica: {user_input}")
+        else:
+            user_input = input("Modello: ").strip()
+        if user_input.lower() in {'q', 'quit', 'exit'}:
+            return None
+        if user_input == '':
+            selection = 1
+        else:
+            if not user_input.isdigit():
+                print("Inserisci un numero valido o 'q' per uscire.")
+                continue
+            selection = int(user_input)
+        if 1 <= selection <= len(models):
+            chosen = models[selection - 1]
+            print(f"\n→ Modello selezionato: {chosen.name}")
+            return chosen
+        print(f"Selezione fuori range (1-{len(models)}). Riprova.")
 
 
 class BCAgent:
@@ -14,14 +62,44 @@ class BCAgent:
     def __init__(self, model_path, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.device = device
         self.policy = BCPolicy(num_actions=6).to(device)
+        self.data_manager = DataManager()
+        self.model_path = Path(model_path)
         
         # Carica modello
         checkpoint = torch.load(model_path, map_location=device)
         self.policy.load_state_dict(checkpoint['model_state_dict'])
         self.policy.eval()
+        run_metadata = checkpoint.get('run_metadata') or {}
+        self.run_id = checkpoint.get('run_id') or run_metadata.get('run_id')
+        self.run_timestamp = checkpoint.get('run_timestamp') or run_metadata.get('run_timestamp')
+        self.metrics_csv_path = (
+            checkpoint.get('metrics_csv_path')
+            or run_metadata.get('metrics_csv_path')
+        )
+        if not self.metrics_csv_path and self.run_timestamp and self.run_id:
+            self.metrics_csv_path = str(self.data_manager.get_metrics_filepath(self.run_timestamp, self.run_id))
+        if not self.metrics_csv_path:
+            parsed = self._infer_run_info_from_filename(self.model_path)
+            if parsed:
+                ts, rid = parsed
+                self.run_timestamp = self.run_timestamp or ts
+                self.run_id = self.run_id or rid
+                self.metrics_csv_path = str(self.data_manager.get_metrics_filepath(ts, rid))
         
         print(f"Modello caricato da: {model_path}")
         print(f"Device: {device}")
+
+    @staticmethod
+    def _infer_run_info_from_filename(model_path: Path):
+        """Prova a inferire timestamp e id dal nome file del modello (formato mod_TIMESTAMP_ID)."""
+        stem = model_path.stem
+        parts = stem.split('_')
+        if len(parts) >= 3 and parts[0] == 'mod':
+            timestamp = f"{parts[1]}_{parts[2]}" if len(parts) >= 3 else None
+            model_id = parts[3] if len(parts) >= 4 else None
+            if timestamp and model_id:
+                return timestamp, model_id
+        return None
     
     def select_action(self, observation):
         """Seleziona azione dalla policy."""
@@ -55,6 +133,24 @@ class BCAgent:
         
         return total_reward, steps
 
+    def log_evaluation(self, evaluation_summary, episode_rewards, episode_lengths):
+        """Salva i risultati della valutazione nel CSV associato al run."""
+        if not self.metrics_csv_path:
+            print("[AVVISO] Nessun CSV di metriche associato al modello. Salvataggio valutazione saltato.")
+            return
+        episode_metrics = [{'reward': float(r), 'steps': int(l)} for r, l in zip(episode_rewards, episode_lengths)]
+        metadata = {
+            'timestamp': evaluation_summary.get('timestamp'),
+            'run_id': f"{self.run_timestamp}_{self.run_id}" if self.run_timestamp and self.run_id else self.run_id,
+            'num_episodes': evaluation_summary.get('num_episodes')
+        }
+        self.data_manager.append_evaluation_results(
+            csv_path=self.metrics_csv_path,
+            evaluation_summary=evaluation_summary,
+            episode_metrics=episode_metrics,
+            metadata=metadata
+        )
+
 
 def evaluate_agent(agent, num_episodes=10):
     """Valuta l'agente su multiple partite."""
@@ -77,13 +173,29 @@ def evaluate_agent(agent, num_episodes=10):
     env.close()
     
     # Statistiche
+    mean_reward = np.mean(episode_rewards)
+    std_reward = np.std(episode_rewards)
+    min_reward = np.min(episode_rewards)
+    max_reward = np.max(episode_rewards)
+    mean_steps = np.mean(episode_lengths)
     print(f"\n{'='*50}")
     print("RISULTATI VALUTAZIONE")
     print(f"{'='*50}")
-    print(f"Reward medio: {np.mean(episode_rewards):.2f} ± {np.std(episode_rewards):.2f}")
-    print(f"Reward min/max: {np.min(episode_rewards):.0f} / {np.max(episode_rewards):.0f}")
-    print(f"Durata media episodi: {np.mean(episode_lengths):.0f} steps")
+    print(f"Reward medio: {mean_reward:.2f} ± {std_reward:.2f}")
+    print(f"Reward min/max: {min_reward:.0f} / {max_reward:.0f}")
+    print(f"Durata media episodi: {mean_steps:.0f} steps")
     print(f"{'='*50}\n")
+    
+    evaluation_summary = {
+        'timestamp': datetime.now().isoformat(),
+        'num_episodes': num_episodes,
+        'average_reward': round(float(mean_reward), 3),
+        'reward_std': round(float(std_reward), 3),
+        'min_reward': round(float(min_reward), 3),
+        'max_reward': round(float(max_reward), 3),
+        'average_steps': round(float(mean_steps), 3)
+    }
+    agent.log_evaluation(evaluation_summary, episode_rewards, episode_lengths)
     
     return episode_rewards, episode_lengths
 
@@ -121,26 +233,11 @@ def play_interactively(agent):
 
 def main():
     """Funzione principale."""
-    # Trova modello più recente
-    model_dir = Path('data/models')
-    if not model_dir.exists():
-        print("Errore: Directory 'data/models' non trovata!")
-        print("Esegui prima 'behavioral_cloning.py' per addestrare un modello.")
+    data_manager = DataManager()
+    model_path = select_model_file(data_manager)
+    if model_path is None:
+        print("Nessun modello selezionato. Uscita.")
         return
-    
-    # Usa best_model.pth se esiste, altrimenti il più recente
-    best_model = model_dir / 'best_model.pth'
-    if best_model.exists():
-        model_path = best_model
-        print(f"Usando miglior modello: {model_path}")
-    else:
-        model_files = list(model_dir.glob('bc_model_*.pth'))
-        if not model_files:
-            print("Errore: Nessun modello trovato!")
-            print("Esegui prima 'behavioral_cloning.py' per addestrare un modello.")
-            return
-        model_path = max(model_files, key=lambda p: p.stat().st_mtime)
-        print(f"Usando modello: {model_path}")
     
     # Crea agente
     agent = BCAgent(model_path)
