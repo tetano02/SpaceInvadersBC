@@ -11,6 +11,14 @@ However, we realized that the **state space of Pac-Man is highly complex and hig
 - To simplify training and facilitate faster experimentation, we decided to switch to the **Space Invaders (ALE/SpaceInvaders-v5)** environment.  
 This environment maintains visual control and temporal dynamics similar to Pac-Man, while offering a **more manageable observation space**, allowing us to focus on the imitation learning aspects rather than extensive state abstraction.
 
+#### 12/11
+
+- First try: One demonstration -> The agent learns only to move left and right, not even properly and it doesn't shoot. Possible reason: LEFT/RIGHT/NOPE -> Press continously. FIRE -> One press. It is more probable that it learns the movement behavior.
+
+- Prova con test esperto Minari: Dataset esperto - Epochs : 50 - Batch size: 32
+
+#### Continue 
+
 ## Objectives
 - Implement **Behavioral Cloning** to train an initial policy from human demonstrations (via keyboard teleoperation).  
 - Extend the model with **DAgger (Dataset Aggregation)** to iteratively improve policy performance using interactive corrections.  
