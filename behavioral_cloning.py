@@ -138,7 +138,7 @@ class BCTrainer:
 
         for observations, actions in train_loader:
             observations = observations.to(self.device)
-            actions = actions.squeeze().to(self.device)
+            actions = actions.squeeze(-1).to(self.device)
 
             # Forward pass
             predictions = self.policy(observations)
@@ -170,7 +170,7 @@ class BCTrainer:
         with torch.no_grad():
             for observations, actions in val_loader:
                 observations = observations.to(self.device)
-                actions = actions.squeeze().to(self.device)
+                actions = actions.squeeze(-1).to(self.device)
 
                 predictions = self.policy(observations)
                 loss = self.criterion(predictions, actions)
@@ -409,7 +409,7 @@ def main():
         return
 
     # Usa file più recente
-    latest_demo_file = max(demo_files, key=lambda p: p.stat().st_mtime)
+    latest_demo_file = min(demo_files, key=lambda p: p.stat().st_mtime)
     print(f"Usando dimostrazioni da: {latest_demo_file}\n")
 
     # Parametri training
