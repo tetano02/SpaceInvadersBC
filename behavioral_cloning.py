@@ -337,13 +337,56 @@ class BCTrainer:
             self.val_accuracies = checkpoint["val_accuracies"]
 
 
+def get_available_devices():
+    """Restituisce una lista di dispositivi disponibili con i loro nomi."""
+    devices = []
+    
+    # CPU è sempre disponibile
+    devices.append({"name": "CPU", "device": "cpu"})
+    
+    # Controlla disponibilità GPU
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            gpu_name = torch.cuda.get_device_name(i)
+            devices.append({"name": f"GPU {i}: {gpu_name}", "device": f"cuda:{i}"})
+    
+    return devices
+
+
+def select_device():
+    """Chiede all'utente di selezionare un dispositivo per il training."""
+    devices = get_available_devices()
+    
+    print("\nDispositivi disponibili:")
+    for idx, device_info in enumerate(devices, 1):
+        print(f"  {idx}. {device_info['name']}")
+    
+    while True:
+        choice = input(f"\nSeleziona dispositivo (1-{len(devices)}) [default: 1]: ").strip()
+        
+        # Default a CPU (opzione 1)
+        if not choice:
+            choice = "1"
+        
+        try:
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(devices):
+                selected_device = devices[choice_idx]
+                print(f"Dispositivo selezionato: {selected_device['name']}")
+                return selected_device['device']
+            else:
+                print(f"⚠ Scelta non valida! Seleziona un numero tra 1 e {len(devices)}.")
+        except ValueError:
+            print(f"⚠ Input non valido! Inserisci un numero tra 1 e {len(devices)}.")
+
+
 def load_demonstrations(filepath):
     """Carica dimostrazioni da file usando DataManager."""
     data_manager = DataManager()
     return data_manager.load_demonstrations(filepath)
 
 
-def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=0.2):
+def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=0.2, device=None):
     """Funzione principale per addestrare il modello BC."""
     # Carica dimostrazioni
     print(f"Caricamento dimostrazioni da: {demonstrations_file}")
@@ -367,7 +410,9 @@ def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=
 
     # Crea modello e trainer
     policy = BCPolicy(num_actions=6)
-    trainer = BCTrainer(policy)
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    trainer = BCTrainer(policy, device=device)
     environment_name = "ALE/SpaceInvaders-v5"
     trainer.configure_run(
         {
@@ -415,10 +460,13 @@ def main():
     # Parametri training
     num_epochs = int(input("Numero di epochs [default: 50]: ") or "50")
     batch_size = int(input("Batch size [default: 32]: ") or "32")
+    
+    # Selezione dispositivo
+    device = select_device()
 
     # Addestra modello
     policy = train_bc_model(
-        latest_demo_file, num_epochs=num_epochs, batch_size=batch_size
+        latest_demo_file, num_epochs=num_epochs, batch_size=batch_size, device=device
     )
 
     print("\nTraining completato! Usa 'evaluate_bc.py' per testare il modello.")
