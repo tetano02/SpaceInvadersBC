@@ -386,9 +386,8 @@ def load_demonstrations(filepath):
     return data_manager.load_demonstrations(filepath)
 
 
-def select_demonstration_file(demo_files):
-    """Permette all'utente di scegliere quale file di dimostrazioni usare."""
-    # Ordina dal più recente al meno recente per comodità
+def select_demonstration_files(demo_files):
+    """Permette all'utente di scegliere uno o più file di dimostrazioni."""
     sorted_files = sorted(demo_files, key=lambda p: p.stat().st_mtime, reverse=True)
 
     print("\nFile di dimostrazioni disponibili:")
@@ -401,29 +400,63 @@ def select_demonstration_file(demo_files):
             f" | {size_mb:.2f} MB"
         )
 
+    print(
+        "\nPuoi inserire un solo numero (es. 1) oppure più numeri separati da virgola"
+        " (es. 1,3,4) per aggregare le dimostrazioni."
+    )
+
     while True:
-        choice = input(
-            f"\nSeleziona file (1-{len(sorted_files)}) [default: 1]: "
+        raw_choice = input(
+            f"Seleziona file (1-{len(sorted_files)}) [default: 1]: "
         ).strip()
-        if not choice:
-            choice = "1"
+        if not raw_choice:
+            raw_choice = "1"
 
+        parts = [part.strip() for part in raw_choice.split(",") if part.strip()]
+        indices = []
         try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(sorted_files):
-                selected = sorted_files[idx]
-                print(f"Userai il file: {selected}\n")
-                return selected
-            print(f"⚠ Scelta non valida! Inserisci un numero tra 1 e {len(sorted_files)}.")
+            for part in parts:
+                idx = int(part) - 1
+                if 0 <= idx < len(sorted_files):
+                    indices.append(idx)
+                else:
+                    raise ValueError
         except ValueError:
-            print(f"⚠ Input non valido! Inserisci un numero tra 1 e {len(sorted_files)}.")
+            print(
+                f"⚠ Input non valido! Inserisci numeri tra 1 e {len(sorted_files)}"
+                " separati da virgola."
+            )
+            continue
+
+        unique_indices = []
+        seen = set()
+        for idx in indices:
+            if idx not in seen:
+                unique_indices.append(idx)
+                seen.add(idx)
+
+        if not unique_indices:
+            print("⚠ Nessun indice valido rilevato, riprova.")
+            continue
+
+        selected = [sorted_files[idx] for idx in unique_indices]
+        if len(selected) == 1:
+            print(f"Userai il file: {selected[0]}\n")
+        else:
+            print("Userai i file:")
+            for path in selected:
+                print(f"  - {path}")
+            print()
+        return selected
 
 
-def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=0.2, device=None):
+def train_bc_model(demonstrations_files, num_epochs=50, batch_size=32, val_split=0.2, device=None):
     """Funzione principale per addestrare il modello BC."""
-    # Carica dimostrazioni
-    print(f"Caricamento dimostrazioni da: {demonstrations_file}")
-    demonstrations = load_demonstrations(demonstrations_file)
+    print("Caricamento dimostrazioni da:")
+    demonstrations = []
+    for demo_file in demonstrations_files:
+        print(f"  - {demo_file}")
+        demonstrations.extend(load_demonstrations(demo_file))
 
     # Crea dataset
     full_dataset = BCDataset(demonstrations)
@@ -451,7 +484,7 @@ def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=
         {
             "environment_name": environment_name,
             "training_type": "behavioral_cloning",
-            "demonstration_files": [str(Path(demonstrations_file))],
+            "demonstration_files": [str(Path(path)) for path in demonstrations_files],
             "num_demonstrations": len(demonstrations),
             "num_epochs": num_epochs,
             "batch_size": batch_size,
@@ -486,9 +519,12 @@ def main():
         print("Esegui prima 'collect_demonstrations.py' per raccogliere dati.")
         return
 
-    # Permetti all'utente di scegliere il file da usare (default: più recente)
-    selected_demo_file = select_demonstration_file(demo_files)
-    print(f"Usando dimostrazioni da: {selected_demo_file}\n")
+    # Permetti all'utente di scegliere uno o più file da usare (default: più recente)
+    selected_demo_files = select_demonstration_files(demo_files)
+    print("Userai le seguenti dimostrazioni:")
+    for path in selected_demo_files:
+        print(f"  - {path}")
+    print()
 
     # Parametri training
     num_epochs = int(input("Numero di epochs [default: 50]: ") or "50")
@@ -499,7 +535,7 @@ def main():
 
     # Addestra modello
     policy = train_bc_model(
-        selected_demo_file,
+        selected_demo_files,
         num_epochs=num_epochs,
         batch_size=batch_size,
         device=device,

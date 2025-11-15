@@ -9,7 +9,12 @@ dependencies = [
     "ale-py>=0.8.0",
     "gymnasium[accept-rom-license]>=0.29.0",
     "pygame>=2.6.1",
-    "torch>=2.9.0",
+    "torch[cuda]==2.6.0",
     "matplotlib>=3.10.7",
     "minari[all,hf]>=0.5.3",
+    "torchvision==0.21.0",
+    "torchaudio==2.6.0",
 ]
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
