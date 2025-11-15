@@ -386,6 +386,39 @@ def load_demonstrations(filepath):
     return data_manager.load_demonstrations(filepath)
 
 
+def select_demonstration_file(demo_files):
+    """Permette all'utente di scegliere quale file di dimostrazioni usare."""
+    # Ordina dal più recente al meno recente per comodità
+    sorted_files = sorted(demo_files, key=lambda p: p.stat().st_mtime, reverse=True)
+
+    print("\nFile di dimostrazioni disponibili:")
+    for idx, demo_path in enumerate(sorted_files, 1):
+        timestamp = datetime.fromtimestamp(demo_path.stat().st_mtime)
+        size_mb = demo_path.stat().st_size / (1024 * 1024)
+        print(
+            f"  {idx}. {demo_path.name}"
+            f" | modificato il {timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            f" | {size_mb:.2f} MB"
+        )
+
+    while True:
+        choice = input(
+            f"\nSeleziona file (1-{len(sorted_files)}) [default: 1]: "
+        ).strip()
+        if not choice:
+            choice = "1"
+
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(sorted_files):
+                selected = sorted_files[idx]
+                print(f"Userai il file: {selected}\n")
+                return selected
+            print(f"⚠ Scelta non valida! Inserisci un numero tra 1 e {len(sorted_files)}.")
+        except ValueError:
+            print(f"⚠ Input non valido! Inserisci un numero tra 1 e {len(sorted_files)}.")
+
+
 def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=0.2, device=None):
     """Funzione principale per addestrare il modello BC."""
     # Carica dimostrazioni
@@ -453,9 +486,9 @@ def main():
         print("Esegui prima 'collect_demonstrations.py' per raccogliere dati.")
         return
 
-    # Usa file più recente
-    latest_demo_file = max(demo_files, key=lambda p: p.stat().st_mtime)
-    print(f"Usando dimostrazioni da: {latest_demo_file}\n")
+    # Permetti all'utente di scegliere il file da usare (default: più recente)
+    selected_demo_file = select_demonstration_file(demo_files)
+    print(f"Usando dimostrazioni da: {selected_demo_file}\n")
 
     # Parametri training
     num_epochs = int(input("Numero di epochs [default: 50]: ") or "50")
@@ -466,7 +499,10 @@ def main():
 
     # Addestra modello
     policy = train_bc_model(
-        latest_demo_file, num_epochs=num_epochs, batch_size=batch_size, device=device
+        selected_demo_file,
+        num_epochs=num_epochs,
+        batch_size=batch_size,
+        device=device,
     )
 
     print("\nTraining completato! Usa 'evaluate_bc.py' per testare il modello.")
