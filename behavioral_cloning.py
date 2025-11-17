@@ -9,6 +9,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from datetime import datetime
+from typing import Any, Dict
 from data_manager import DataManager
 
 
@@ -46,29 +47,22 @@ class BCDataset(Dataset):
 
 
 class BCPolicy(nn.Module):
-    """Rete neurale per Behavioral Cloning con immagini."""
+    """Rete neurale stile DQN (CNN + MLP) per Behavioral Cloning."""
 
     def __init__(self, num_actions=6):
         super(BCPolicy, self).__init__()
 
-        # CNN per estrarre features dalle immagini
         self.cnn = nn.Sequential(
-            # Input: 3 x 210 x 160
             nn.Conv2d(3, 32, kernel_size=8, stride=4),
             nn.ReLU(),
-            # 32 x 51 x 39
             nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.ReLU(),
-            # 64 x 24 x 18
             nn.Conv2d(64, 64, kernel_size=3, stride=1),
             nn.ReLU(),
-            # 64 x 22 x 16
         )
 
-        # Calcola dimensione output CNN
         self.feature_size = 64 * 22 * 16
 
-        # Fully connected layers
         self.fc = nn.Sequential(
             nn.Linear(self.feature_size, 512),
             nn.ReLU(),
@@ -77,13 +71,81 @@ class BCPolicy(nn.Module):
         )
 
     def forward(self, x):
-        # Estrai features con CNN
         x = self.cnn(x)
-        # Flatten
         x = x.view(x.size(0), -1)
-        # Classificazione azione
         x = self.fc(x)
         return x
+
+
+class BCMLPPolicy(nn.Module):
+    """Multi-layer perceptron che lavora sull'immagine flattenata."""
+
+    def __init__(self, num_actions=6):
+        super().__init__()
+        input_dim = 3 * 210 * 160
+        self.network = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(input_dim, 2048),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(2048, 512),
+            nn.ReLU(),
+            nn.Linear(512, num_actions),
+        )
+
+    def forward(self, x):
+        return self.network(x)
+
+
+MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "dqn": {
+        "label": "DQN CNN",
+        "description": "CNN con tre conv e testa fully-connected (default)",
+        "builder": lambda num_actions: BCPolicy(num_actions=num_actions),
+    },
+    "mlp": {
+        "label": "Multi-Layer Perceptron",
+        "description": "Rete fully-connected su osservazione flattenata",
+        "builder": lambda num_actions: BCMLPPolicy(num_actions=num_actions),
+    },
+}
+
+DEFAULT_MODEL_TYPE = "dqn"
+
+
+def get_available_model_types():
+    """Restituisce il catalogo dei modelli registrati."""
+    return MODEL_REGISTRY
+
+
+def build_policy(model_type: str, num_actions: int = 6):
+    """Istanzia il modello richiesto."""
+    key = (model_type or DEFAULT_MODEL_TYPE).lower()
+    spec = MODEL_REGISTRY.get(key)
+    if spec is None:
+        valid = ", ".join(MODEL_REGISTRY.keys())
+        raise ValueError(f"Model '{model_type}' non supportato. Opzioni: {valid}")
+    return spec["builder"](num_actions=num_actions)
+
+
+def prompt_model_type(default: str = DEFAULT_MODEL_TYPE):
+    """Permette all'utente di scegliere il tipo di modello da usare."""
+    options = list(MODEL_REGISTRY.items())
+    print("\n=== SELEZIONE MODELLO BC ===")
+    for idx, (key, spec) in enumerate(options, start=1):
+        default_tag = " (default)" if key == default else ""
+        print(f"{idx}. {spec['label']} [{key}]{default_tag}\n   {spec['description']}")
+    print("Scegli inserendo il numero o premi ENTER per il default.")
+
+    while True:
+        choice = input("Modello: ").strip()
+        if not choice:
+            return default
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(options):
+                return options[idx][0]
+        print("Input non valido. Riprova.")
 
 
 class BCTrainer:
@@ -92,11 +154,13 @@ class BCTrainer:
     def __init__(
         self,
         policy,
+        model_type=DEFAULT_MODEL_TYPE,
         learning_rate=1e-4,
         device="cuda" if torch.cuda.is_available() else "cpu",
     ):
         self.policy = policy.to(device)
         self.device = device
+        self.model_type = (model_type or DEFAULT_MODEL_TYPE).lower()
         self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate)
         self.criterion = nn.CrossEntropyLoss()
 
@@ -117,7 +181,7 @@ class BCTrainer:
         self.metrics_csv_path = self.data_manager.get_metrics_filepath(
             self.run_timestamp, self.run_id
         )
-        self.run_metadata = {}
+        self.run_metadata = {"model_type": self.model_type}
         self.run_start_time = None
         self.run_end_time = None
 
@@ -128,6 +192,7 @@ class BCTrainer:
         if metadata is None:
             metadata = {}
         self.run_metadata.update(metadata)
+        self.run_metadata.setdefault("model_type", self.model_type)
 
     def train_epoch(self, train_loader):
         """Addestra per una epoch."""
@@ -246,6 +311,7 @@ class BCTrainer:
             "training_type": self.run_metadata.get(
                 "training_type", "behavioral_cloning"
             ),
+            "model_type": self.run_metadata.get("model_type", self.model_type),
             "num_epochs": num_epochs,
             "batch_size": self.run_metadata.get("batch_size"),
             "total_dataset_samples": self.run_metadata.get("total_samples"),
@@ -298,6 +364,7 @@ class BCTrainer:
             "run_timestamp": self.run_timestamp,
             "run_id": self.run_id,
             "metrics_csv_path": str(self.metrics_csv_path),
+            "model_type": self.run_metadata.get("model_type", self.model_type),
         }
         save_kwargs = dict(
             model_state_dict=self.policy.state_dict(),
@@ -343,7 +410,13 @@ def load_demonstrations(filepath):
     return data_manager.load_demonstrations(filepath)
 
 
-def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=0.2):
+def train_bc_model(
+    demonstrations_file,
+    num_epochs=50,
+    batch_size=32,
+    val_split=0.2,
+    model_type=DEFAULT_MODEL_TYPE,
+):
     """Funzione principale per addestrare il modello BC."""
     # Carica dimostrazioni
     print(f"Caricamento dimostrazioni da: {demonstrations_file}")
@@ -366,13 +439,14 @@ def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     # Crea modello e trainer
-    policy = BCPolicy(num_actions=6)
-    trainer = BCTrainer(policy)
+    policy = build_policy(model_type=model_type, num_actions=6)
+    trainer = BCTrainer(policy, model_type=model_type)
     environment_name = "ALE/SpaceInvaders-v5"
     trainer.configure_run(
         {
             "environment_name": environment_name,
             "training_type": "behavioral_cloning",
+            "model_type": model_type,
             "demonstration_files": [str(Path(demonstrations_file))],
             "num_demonstrations": len(demonstrations),
             "num_epochs": num_epochs,
@@ -393,7 +467,7 @@ def train_bc_model(demonstrations_file, num_epochs=50, batch_size=32, val_split=
     return trainer.policy
 
 
-def main():
+def main(selected_model_type=None):
     """Funzione principale."""
     # Trova file di dimostrazioni più recente
     demo_dir = Path("data/demonstrations")
@@ -412,13 +486,18 @@ def main():
     latest_demo_file = min(demo_files, key=lambda p: p.stat().st_mtime)
     print(f"Usando dimostrazioni da: {latest_demo_file}\n")
 
+    model_type = selected_model_type or prompt_model_type()
+
     # Parametri training
     num_epochs = int(input("Numero di epochs [default: 50]: ") or "50")
     batch_size = int(input("Batch size [default: 32]: ") or "32")
 
     # Addestra modello
     policy = train_bc_model(
-        latest_demo_file, num_epochs=num_epochs, batch_size=batch_size
+        latest_demo_file,
+        num_epochs=num_epochs,
+        batch_size=batch_size,
+        model_type=model_type,
     )
 
     print("\nTraining completato! Usa 'evaluate_bc.py' per testare il modello.")

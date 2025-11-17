@@ -60,7 +60,7 @@ def main():
         print("\nOpzioni:")
         print("  1. Raccogli dimostrazioni (gioca manualmente)")
         print("  2. Carica dataset esperto da Minari")
-        print("  3. Addestra modello con Behavioral Cloning")
+        print("  3. Addestra modello con Behavioral Cloning (scegli architettura)")
         print("  4. Valuta policy appresa")
         print("  5. Pipeline completa (raccolta + training + valutazione)")
         print("  0. Esci")
@@ -93,9 +93,10 @@ def main():
             print("\n" + "=" * 60)
             print("TRAINING BEHAVIORAL CLONING")
             print("=" * 60)
-            from behavioral_cloning import main as train_main
+            from behavioral_cloning import main as train_main, prompt_model_type
 
-            train_main()
+            selected_model = prompt_model_type()
+            train_main(selected_model_type=selected_model)
 
         elif choice == "4":
             if not has_models:
@@ -131,9 +132,10 @@ def main():
 
             # Step 2: Training
             print("\n[Step 2/3] Training modello...")
-            from behavioral_cloning import main as train_main
+            from behavioral_cloning import main as train_main, prompt_model_type
 
-            train_main()
+            selected_model = prompt_model_type()
+            train_main(selected_model_type=selected_model)
 
             # Controlla se il modello è stato creato
             has_models, _ = check_models()

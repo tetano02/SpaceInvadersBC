@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from env_make import make_space_invaders_env
-from behavioral_cloning import BCPolicy
+from behavioral_cloning import build_policy, DEFAULT_MODEL_TYPE
 from data_manager import DataManager
 
 
@@ -61,14 +61,11 @@ class BCAgent:
     
     def __init__(self, model_path, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.device = device
-        self.policy = BCPolicy(num_actions=6).to(device)
         self.data_manager = DataManager()
         self.model_path = Path(model_path)
         
         # Carica modello
         checkpoint = torch.load(model_path, map_location=device)
-        self.policy.load_state_dict(checkpoint['model_state_dict'])
-        self.policy.eval()
         run_metadata = checkpoint.get('run_metadata') or {}
         self.run_id = checkpoint.get('run_id') or run_metadata.get('run_id')
         self.run_timestamp = checkpoint.get('run_timestamp') or run_metadata.get('run_timestamp')
@@ -76,6 +73,14 @@ class BCAgent:
             checkpoint.get('metrics_csv_path')
             or run_metadata.get('metrics_csv_path')
         )
+        self.model_type = (
+            run_metadata.get('model_type')
+            or checkpoint.get('model_type')
+            or DEFAULT_MODEL_TYPE
+        )
+        self.policy = build_policy(self.model_type, num_actions=6).to(device)
+        self.policy.load_state_dict(checkpoint['model_state_dict'])
+        self.policy.eval()
         if not self.metrics_csv_path and self.run_timestamp and self.run_id:
             self.metrics_csv_path = str(self.data_manager.get_metrics_filepath(self.run_timestamp, self.run_id))
         if not self.metrics_csv_path:
@@ -87,7 +92,7 @@ class BCAgent:
                 self.metrics_csv_path = str(self.data_manager.get_metrics_filepath(ts, rid))
         
         print(f"Modello caricato da: {model_path}")
-        print(f"Device: {device}")
+        print(f"Device: {device} | Tipo modello: {self.model_type}")
 
     @staticmethod
     def _infer_run_info_from_filename(model_path: Path):
@@ -142,7 +147,8 @@ class BCAgent:
         metadata = {
             'timestamp': evaluation_summary.get('timestamp'),
             'run_id': f"{self.run_timestamp}_{self.run_id}" if self.run_timestamp and self.run_id else self.run_id,
-            'num_episodes': evaluation_summary.get('num_episodes')
+            'num_episodes': evaluation_summary.get('num_episodes'),
+            'model_type': self.model_type,
         }
         self.data_manager.append_evaluation_results(
             csv_path=self.metrics_csv_path,
