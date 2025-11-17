@@ -9,11 +9,11 @@ dependencies = [
     "ale-py>=0.8.0",
     "gymnasium[accept-rom-license]>=0.29.0",
     "pygame>=2.6.1",
-    "torch[cuda]==2.6.0",
+    "torch[cuda]==2.6.0+cu124",
     "matplotlib>=3.10.7",
     "minari[all,hf]>=0.5.3",
-    "torchvision==0.21.0",
-    "torchaudio==2.6.0",
+    "torchvision==0.21.0+cu124",
+    "torchaudio==2.6.0+cu124",
 ]
 
 [[tool.uv.index]]
