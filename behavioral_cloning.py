@@ -517,7 +517,14 @@ def select_demonstration_files(demo_files):
         return selected
 
 
-def train_bc_model(demonstrations_files, num_epochs=50, batch_size=32, val_split=0.2, device=None):
+def train_bc_model(
+    demonstrations_files,
+    num_epochs=50,
+    batch_size=32,
+    val_split=0.2,
+    device=None,
+    model_type=DEFAULT_MODEL_TYPE,
+):
     """Funzione principale per addestrare il modello BC."""
     print("Caricamento dimostrazioni da:")
     demonstrations = []
@@ -542,15 +549,16 @@ def train_bc_model(demonstrations_files, num_epochs=50, batch_size=32, val_split
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     # Crea modello e trainer
-    policy = BCPolicy(num_actions=6)
+    policy = build_policy(model_type=model_type, num_actions=6)
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    trainer = BCTrainer(policy, device=device)
+    trainer = BCTrainer(policy, model_type=model_type, device=device)
     environment_name = "ALE/SpaceInvaders-v5"
     trainer.configure_run(
         {
             "environment_name": environment_name,
             "training_type": "behavioral_cloning",
+            "model_type": model_type,
             "demonstration_files": [str(Path(path)) for path in demonstrations_files],
             "num_demonstrations": len(demonstrations),
             "num_epochs": num_epochs,
@@ -608,6 +616,7 @@ def main(selected_model_type=None):
         num_epochs=num_epochs,
         batch_size=batch_size,
         device=device,
+        model_type=model_type,
     )
 
     print("\nTraining completato! Usa 'evaluate_bc.py' per testare il modello.")
