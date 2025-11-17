@@ -124,3 +124,7 @@ The CSV shares the same timestamp/ID used for the model checkpoint and plots, ma
 
 **Group Name:** CTRL+C - CTRL+PAC
 **Members:** Agnelli Stefano, Cremonesi Andrea, Mombelli Tommaso, Sun Wen Wen
+
+uv pip install --extra-index-url https://download.pytorch.org/whl/cu124 torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124
+
+uv run python -c "import torch;print(torch.**version**);print(torch.version.cuda);print(torch.cuda.is_available());print(torch.cuda.device_count());\nprint([torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())])"
