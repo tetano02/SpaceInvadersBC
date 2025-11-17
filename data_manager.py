@@ -392,9 +392,15 @@ class DataManager:
         
         filepath = self.plots_dir / filename
         
-        # Salva il plot
+        # Salva il plot in PNG
         plt.savefig(filepath)
         print(f"\n✓ Plot salvato in: {filepath}")
+
+        # Salva anche la figura intera (pickle .fig) per editing futuro
+        figure_path = filepath.with_suffix('.fig')
+        with open(figure_path, 'wb') as fig_file:
+            pickle.dump(fig, fig_file)
+        print(f"✓ Figura salvata in: {figure_path}")
         
         # Mostra il plot
         plt.show()

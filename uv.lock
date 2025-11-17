@@ -994,6 +994,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "minari", extra = ["all", "hf"] },
     { name = "pygame" },
+    { name = "setuptools" },
     { name = "torch" },
     { name = "torchaudio" },
     { name = "torchvision" },
@@ -1010,6 +1011,7 @@ requires-dist = [
     { name = "torch", extras = ["cuda"], specifier = "==2.6.0" },
     { name = "torchaudio", specifier = "==2.6.0" },
     { name = "torchvision", specifier = "==0.21.0" },
+    { name = "setuptools", specifier = "<81" },
 ]
 
 [[package]]

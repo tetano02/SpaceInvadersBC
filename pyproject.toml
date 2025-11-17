@@ -14,6 +14,7 @@ dependencies = [
     "minari[all,hf]>=0.5.3",
     "torchvision==0.21.0",
     "torchaudio==2.6.0",
+    "setuptools<81",
 ]
 
 [[tool.uv.index]]
