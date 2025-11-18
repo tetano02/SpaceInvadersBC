@@ -34,6 +34,11 @@ It focuses on developing an **interactive imitation learning framework**, combin
 3. **DAgger Iterations:** Run interactive sessions where a human provides corrective actions as the agent plays.
 4. **Evaluation:** Compare performance before and after DAgger corrections.
 
+### Available Model Architectures
+- **DQN CNN (default):** Convolutional backbone inspired by Atari DQN baselines.
+- **MLP:** Fully-connected network over flattened RGB frames (baseline/diagnostics).
+- **Vision Transformer:** Compact ViT with learnable CLS token and patch embeddings for richer spatial reasoning (requires more VRAM).
+
 ## Tools and Frameworks
 
 - **Gymnasium (Farama Foundation)** – Environment simulation

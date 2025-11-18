@@ -97,6 +97,76 @@ class BCMLPPolicy(nn.Module):
         return self.network(x)
 
 
+class BCVisionTransformer(nn.Module):
+    """Vision Transformer compatto per osservazioni Atari."""
+
+    def __init__(
+        self,
+        num_actions=6,
+        image_size=(210, 160),
+        patch_size=(14, 16),
+        embed_dim=256,
+        depth=6,
+        num_heads=8,
+        mlp_ratio=4.0,
+        dropout=0.1,
+    ):
+        super().__init__()
+        self.image_size = image_size
+        self.patch_size = patch_size
+
+        if image_size[0] % patch_size[0] != 0 or image_size[1] % patch_size[1] != 0:
+            raise ValueError("patch_size deve dividere esattamente image_size per altezza e larghezza")
+
+        self.patch_embed = nn.Conv2d(
+            in_channels=3,
+            out_channels=embed_dim,
+            kernel_size=patch_size,
+            stride=patch_size,
+        )
+        num_patches = (image_size[0] // patch_size[0]) * (image_size[1] // patch_size[1])
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+        self.pos_drop = nn.Dropout(dropout)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=num_heads,
+            dim_feedforward=int(embed_dim * mlp_ratio),
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=depth)
+        self.norm = nn.LayerNorm(embed_dim)
+        self.head = nn.Linear(embed_dim, num_actions)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        nn.init.trunc_normal_(self.head.weight, std=0.02)
+        if self.head.bias is not None:
+            nn.init.zeros_(self.head.bias)
+
+    def forward(self, x):
+        x = self.patch_embed(x)  # (B, embed_dim, H', W')
+        x = x.flatten(2).transpose(1, 2)  # (B, num_patches, embed_dim)
+
+        batch_size = x.size(0)
+        cls_tokens = self.cls_token.expand(batch_size, -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+        x = x + self.pos_embed
+        x = self.pos_drop(x)
+
+        x = self.transformer(x)
+        x = self.norm(x[:, 0])
+        return self.head(x)
+
+
 MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
     "dqn": {
         "label": "DQN CNN",
@@ -107,6 +177,11 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
         "label": "Multi-Layer Perceptron",
         "description": "Rete fully-connected su osservazione flattenata",
         "builder": lambda num_actions: BCMLPPolicy(num_actions=num_actions),
+    },
+    "vit": {
+        "label": "Vision Transformer",
+        "description": "Transformer compatto con patch embedding (più esigente in VRAM)",
+        "builder": lambda num_actions: BCVisionTransformer(num_actions=num_actions),
     },
 }
 
