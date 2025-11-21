@@ -257,6 +257,9 @@ class BCTrainer:
             self.run_timestamp, self.run_id
         )
         self.run_metadata = {"model_type": self.model_type}
+        self.run_metadata["model_label"] = MODEL_REGISTRY.get(self.model_type, {}).get(
+            "label", self.model_type
+        )
         self.run_start_time = None
         self.run_end_time = None
 
@@ -268,6 +271,9 @@ class BCTrainer:
             metadata = {}
         self.run_metadata.update(metadata)
         self.run_metadata.setdefault("model_type", self.model_type)
+        self.run_metadata.setdefault(
+            "model_label", MODEL_REGISTRY.get(self.model_type, {}).get("label", self.model_type)
+        )
 
     def train_epoch(self, train_loader):
         """Addestra per una epoch."""
@@ -430,6 +436,7 @@ class BCTrainer:
             val_accuracies=self.val_accuracies,
             model_timestamp=self.last_save_timestamp,
             model_id=self.last_save_id,
+            metadata=self.run_metadata,
         )
 
     def save_model(self, filename=None):
@@ -629,12 +636,18 @@ def train_bc_model(
         device = "cuda" if torch.cuda.is_available() else "cpu"
     trainer = BCTrainer(policy, model_type=model_type, device=device)
     environment_name = "ALE/SpaceInvaders-v5"
+    demo_file_paths = [str(Path(path)) for path in demonstrations_files]
+    dataset_label = Path(demonstrations_files[0]).name if demonstrations_files else "Unknown"
+    if len(demonstrations_files) > 1:
+        dataset_label = f"{dataset_label} (+{len(demonstrations_files) - 1})"
+
     trainer.configure_run(
         {
             "environment_name": environment_name,
             "training_type": "behavioral_cloning",
             "model_type": model_type,
-            "demonstration_files": [str(Path(path)) for path in demonstrations_files],
+            "demonstration_files": demo_file_paths,
+            "training_dataset_name": dataset_label,
             "num_demonstrations": len(demonstrations),
             "num_epochs": num_epochs,
             "batch_size": batch_size,

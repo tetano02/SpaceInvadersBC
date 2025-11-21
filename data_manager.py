@@ -338,7 +338,8 @@ class DataManager:
     
     def save_training_plot(self, train_losses, val_losses, 
                           train_accuracies, val_accuracies,
-                          filename=None, model_timestamp=None, model_id=None):
+                          filename=None, model_timestamp=None, model_id=None,
+                          metadata=None):
         """
         Salva un plot della storia del training.
         
@@ -375,7 +376,10 @@ class DataManager:
         ax2.legend()
         ax2.grid(True)
         
-        plt.tight_layout()
+        # Titolo descrittivo con modello, dataset, epochs e batch
+        title = self._build_plot_title(metadata, len(train_losses))
+        fig.suptitle(title, fontsize=12)
+        fig.tight_layout(rect=[0, 0, 1, 0.94])
         
         # Nome file: plot_YYMMDD_hhmmss_id.png (id alfanumerico, sincronizzato con modello)
         if filename is None:
@@ -406,6 +410,38 @@ class DataManager:
         plt.show()
         
         return filepath
+
+    def _build_plot_title(self, metadata, observed_epochs):
+        """Costruisce il titolo del plot con dettagli della run."""
+        metadata = metadata or {}
+
+        model_name = metadata.get('model_label') or metadata.get('model_type') or 'Unknown model'
+        dataset_label = metadata.get('training_dataset_name')
+
+        if not dataset_label:
+            demo_files = metadata.get('demonstration_files')
+            if isinstance(demo_files, (list, tuple)) and demo_files:
+                first = Path(demo_files[0]).name
+                if len(demo_files) > 1:
+                    dataset_label = f"{first} (+{len(demo_files) - 1})"
+                else:
+                    dataset_label = first
+
+        if not dataset_label:
+            dataset_label = metadata.get('environment_name')
+        if not dataset_label:
+            dataset_label = 'Unknown dataset'
+
+        epoch_count = metadata.get('num_epochs') or observed_epochs or 'N/A'
+        batch_size = metadata.get('batch_size') or metadata.get('train_batch_size') or 'N/A'
+
+        parts = []
+        parts.append(f"Model: {model_name}")
+        parts.append(f"Dataset: {dataset_label}")
+        parts.append(f"Epochs: {epoch_count}")
+        parts.append(f"Batch: {batch_size}")
+
+        return " | ".join(parts)
     
     def get_latest_demonstrations(self):
         """
