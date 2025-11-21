@@ -24,7 +24,7 @@ from data_manager import DataManager
 class DemonstrationCollector:
     """Raccoglie dimostrazioni umane per Behavioral Cloning."""
 
-    def __init__(self, env):
+    def __init__(self, env, fps=30, frame_skip=2):
         self.env = env
         self.demonstrations = []
         self.current_episode = {
@@ -33,6 +33,11 @@ class DemonstrationCollector:
             "rewards": [],
             "dones": [],
         }
+        
+        # Clock per controllare il frame rate
+        self.clock = pygame.time.Clock()
+        self.fps = fps
+        self.frame_skip = frame_skip  # Quanti frame eseguire per ogni azione registrata
 
         # Mappatura tasti -> azioni Space Invaders
         # Azioni: 0=NOOP, 1=FIRE, 2=RIGHT, 3=LEFT, 4=RIGHTFIRE, 5=LEFTFIRE
@@ -94,40 +99,59 @@ class DemonstrationCollector:
                         print("Partita abbandonata (non salvata)")
                         return True, total_reward
 
-            # Ottieni azione umana (legge i tasti ad ogni frame)
+            # Ottieni azione umana
             action = self.get_human_action()
 
-            # Salva osservazione e azione (salva TUTTI i frame)
-            self.current_episode["observations"].append(np.copy(observation))
+            # Salva osservazione e azione (copia necessaria perché gym riusa il buffer)
+            self.current_episode["observations"].append(observation.copy())
             self.current_episode["actions"].append(action)
 
-            # Esegui azione
-            observation, reward, done, truncated, info = self.env.step(action)
+            # Esegui l'azione per frame_skip frame e accumula reward
+            frame_reward = 0
+            for _ in range(self.frame_skip):
+                observation, reward, done, truncated, info = self.env.step(action)
+                frame_reward += reward
+                total_reward += reward
+                
+                if done or truncated:
+                    break
+                
+                # Limita il frame rate
+                self.clock.tick(self.fps)
 
-            # Salva reward e done
-            self.current_episode["rewards"].append(reward)
+            # Salva reward accumulato e done
+            self.current_episode["rewards"].append(frame_reward)
             self.current_episode["dones"].append(done or truncated)
 
-            total_reward += reward
-
-        # Converti liste in array numpy per efficienza
-        self.current_episode["observations"] = np.array(
-            self.current_episode["observations"], dtype=np.uint8
-        )
-        self.current_episode["actions"] = np.array(
-            self.current_episode["actions"], dtype=np.int8
-        )
-        self.current_episode["rewards"] = np.array(
-            self.current_episode["rewards"], dtype=np.float32
-        )
-        self.current_episode["dones"] = np.array(
-            self.current_episode["dones"], dtype=np.bool_
-        )
+        # Converti liste in array numpy per efficienza (una sola volta alla fine)
+        episode_data = {
+            "observations": np.array(
+                self.current_episode["observations"], dtype=np.uint8
+            ),
+            "actions": np.array(
+                self.current_episode["actions"], dtype=np.int8
+            ),
+            "rewards": np.array(
+                self.current_episode["rewards"], dtype=np.float32
+            ),
+            "dones": np.array(
+                self.current_episode["dones"], dtype=np.bool_
+            ),
+        }
 
         # Salva l'episodio completato
-        self.demonstrations.append(self.current_episode.copy())
+        self.demonstrations.append(episode_data)
+        
+        # Libera la memoria delle liste temporanee
+        self.current_episode = {
+            "observations": [],
+            "actions": [],
+            "rewards": [],
+            "dones": [],
+        }
+        
         print(f"\nPartita completata! Reward totale: {total_reward}")
-        print(f"Passi registrati: {len(self.current_episode['actions'])}")
+        print(f"Passi registrati: {len(episode_data['actions'])}")
 
         return True, total_reward
 
