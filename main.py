@@ -125,7 +125,7 @@ def main():
             print("\n" + "=" * 60)
             print("RIPRODUZIONE DIMOSTRAZIONI")
             print("=" * 60)
-            from reply_demonstrations import main as reply_main
+            from replay_demonstrations import main as reply_main
 
             reply_main()
 
