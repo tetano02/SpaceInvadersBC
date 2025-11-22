@@ -203,13 +203,18 @@ class BCAgent:
         )
 
 
-def evaluate_agent(agent, num_episodes=10):
+def evaluate_agent(agent, num_episodes=10, render_mode='human'):
     """Valuta l'agente su multiple partite."""
-    env = make_space_invaders_env(render_mode='human')
+    env = make_space_invaders_env(render_mode=render_mode)
     
     print(f"\n{'='*50}")
     print(f"VALUTAZIONE AGENTE - {num_episodes} episodi")
     print(f"{'='*50}\n")
+    if render_mode == 'human':
+        print("Modalità: rendering attivo (più lento, visibile)")
+    else:
+        print("Modalità: headless (nessun rendering, massima velocità)")
+    print()
     
     episode_rewards = []
     episode_lengths = []
@@ -249,6 +254,20 @@ def evaluate_agent(agent, num_episodes=10):
     agent.log_evaluation(evaluation_summary, episode_rewards, episode_lengths)
     
     return episode_rewards, episode_lengths
+
+
+def prompt_render_choice(default_show=True):
+    """Chiede all'utente se visualizzare il gameplay durante la valutazione."""
+    default_text = "S" if default_show else "N"
+    while True:
+        choice = input(f"Visualizzare il gameplay durante la valutazione? [s/n] (default: {default_text}): ").strip().lower()
+        if not choice:
+            return 'human' if default_show else None
+        if choice in {"s", "si", "y", "yes"}:
+            return 'human'
+        if choice in {"n", "no"}:
+            return None
+        print("Input non valido. Rispondi con 's' o 'n'.")
 
 
 def play_interactively(agent):
@@ -305,12 +324,14 @@ def main():
         choice = input("\nScelta: ")
         
         if choice == '1':
-            evaluate_agent(agent, num_episodes=10)
+            render_mode = prompt_render_choice()
+            evaluate_agent(agent, num_episodes=10, render_mode=render_mode)
         elif choice == '2':
             play_interactively(agent)
         elif choice == '3':
             num_eps = int(input("Numero di episodi: "))
-            evaluate_agent(agent, num_episodes=num_eps)
+            render_mode = prompt_render_choice()
+            evaluate_agent(agent, num_episodes=num_eps, render_mode=render_mode)
         elif choice == '0':
             break
         else:
