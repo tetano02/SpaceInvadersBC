@@ -78,9 +78,12 @@ class BCAgent:
             or checkpoint.get('model_type')
             or DEFAULT_MODEL_TYPE
         )
-        self.policy = build_policy(self.model_type, num_actions=6).to(device)
+        self.frame_mode = self._determine_frame_mode(run_metadata, checkpoint)
+        input_channels = 6 if self.frame_mode == 'stacked' else 3
+        self.policy = build_policy(self.model_type, num_actions=6, in_channels=input_channels).to(device)
         self.policy.load_state_dict(checkpoint['model_state_dict'])
         self.policy.eval()
+        self._prev_frame = None
         if not self.metrics_csv_path and self.run_timestamp and self.run_id:
             self.metrics_csv_path = str(self.data_manager.get_metrics_filepath(self.run_timestamp, self.run_id))
         if not self.metrics_csv_path:
@@ -92,7 +95,7 @@ class BCAgent:
                 self.metrics_csv_path = str(self.data_manager.get_metrics_filepath(ts, rid))
         
         print(f"Modello caricato da: {model_path}")
-        print(f"Device: {device} | Tipo modello: {self.model_type}")
+        print(f"Device: {device} | Tipo modello: {self.model_type} | Input: {self.frame_mode}")
 
     @staticmethod
     def _infer_run_info_from_filename(model_path: Path):
@@ -105,12 +108,53 @@ class BCAgent:
             if timestamp and model_id:
                 return timestamp, model_id
         return None
+
+    @staticmethod
+    def _determine_frame_mode(run_metadata, checkpoint):
+        if run_metadata and run_metadata.get('frame_mode'):
+            return run_metadata['frame_mode'].lower()
+        if 'frame_mode' in checkpoint:
+            return str(checkpoint['frame_mode']).lower()
+        state_dict = checkpoint.get('model_state_dict', {})
+        inferred_channels = BCAgent._infer_input_channels(state_dict)
+        return 'stacked' if inferred_channels and inferred_channels >= 6 else 'single'
+
+    @staticmethod
+    def _infer_input_channels(state_dict):
+        if not state_dict:
+            return None
+        conv_keys = ['cnn.0.weight', 'patch_embed.weight']
+        for key in conv_keys:
+            tensor = state_dict.get(key)
+            if tensor is not None and tensor.ndim >= 2:
+                return tensor.shape[1]
+        linear_key = 'network.1.weight'
+        tensor = state_dict.get(linear_key)
+        if tensor is not None and tensor.ndim >= 2:
+            flattened = tensor.shape[1]
+            pixels = 210 * 160
+            if flattened % pixels == 0:
+                return flattened // pixels
+        # Fallback: inspect first tensor with >=2 dims
+        for tensor in state_dict.values():
+            if hasattr(tensor, 'ndim') and tensor.ndim >= 2:
+                return tensor.shape[1]
+        return None
     
+    def _preprocess_observation(self, observation):
+        """Prepara il tensore di input rispettando il frame_mode."""
+        curr = torch.FloatTensor(observation).permute(2, 0, 1) / 255.0
+        if self.frame_mode == 'stacked':
+            prev = self._prev_frame if self._prev_frame is not None else curr
+            stacked = torch.cat([prev, curr], dim=0)
+            self._prev_frame = curr
+            return stacked.unsqueeze(0).to(self.device)
+        self._prev_frame = curr
+        return curr.unsqueeze(0).to(self.device)
+
     def select_action(self, observation):
         """Seleziona azione dalla policy."""
-        # Preprocessa osservazione
-        obs = torch.FloatTensor(observation).permute(2, 0, 1).unsqueeze(0) / 255.0
-        obs = obs.to(self.device)
+        obs = self._preprocess_observation(observation)
         
         # Predici azione
         with torch.no_grad():
@@ -122,6 +166,7 @@ class BCAgent:
     def play_episode(self, env, render=True, max_steps=10000):
         """Gioca un episodio completo."""
         observation, info = env.reset()
+        self._prev_frame = None
         total_reward = 0
         steps = 0
         done = False
@@ -216,6 +261,7 @@ def play_interactively(agent):
     print("Premi ENTER per vedere l'agente giocare...")
     input()
     
+    agent._prev_frame = None
     observation, info = env.reset()
     total_reward = 0
     steps = 0

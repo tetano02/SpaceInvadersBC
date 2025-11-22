@@ -434,12 +434,23 @@ class DataManager:
 
         epoch_count = metadata.get('num_epochs') or observed_epochs or 'N/A'
         batch_size = metadata.get('batch_size') or metadata.get('train_batch_size') or 'N/A'
+        frame_mode = metadata.get('frame_mode')
+        if frame_mode == 'stacked':
+            frame_label = 'Input: 2 frames'
+        elif frame_mode == 'single':
+            frame_label = 'Input: 1 frame'
+        elif frame_mode:
+            frame_label = f"Input: {frame_mode}"
+        else:
+            frame_label = None
 
         parts = []
         parts.append(f"Model: {model_name}")
         parts.append(f"Dataset: {dataset_label}")
         parts.append(f"Epochs: {epoch_count}")
         parts.append(f"Batch: {batch_size}")
+        if frame_label:
+            parts.append(frame_label)
 
         return " | ".join(parts)
     
