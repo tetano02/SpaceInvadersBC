@@ -153,6 +153,8 @@ def improve_model_with_gail(demo_files, model_files):
     disc_updates = prompt_int_input("Aggiornamenti discriminatore per iterazione [default: 5]: ", 5)
     policy_updates = prompt_int_input("Aggiornamenti policy per iterazione [default: 1]: ", 1)
     epsilon = prompt_float_input("Epsilon esplorazione [default: 0.05]: ", 0.05)
+    # Ridotta capacità buffer per ridurre uso memoria
+    buffer_capacity = prompt_int_input("Capacità agent buffer [default: 50000]: ", 50000)
 
     trainer = GAILTrainer(
         policy=policy,
@@ -162,6 +164,7 @@ def improve_model_with_gail(demo_files, model_files):
         bc_checkpoint_path=model_path,
         policy_output_type=policy_mode,
         state_preprocessor=preprocessor,
+        agent_buffer_capacity=buffer_capacity,
         device=device,
     )
 

@@ -47,6 +47,7 @@ sequence (collect → discriminator updates → policy update + logging).
 
 from __future__ import annotations
 
+import gc
 import random
 from collections import deque
 from dataclasses import dataclass
@@ -75,18 +76,38 @@ def default_state_preprocessor(observation: np.ndarray | torch.Tensor) -> torch.
     them to channel-first format while normalizing to [0, 1]. Vector inputs are
     simply cast to float32.
     """
-
-    tensor = (
-        observation.clone().detach()
-        if isinstance(observation, torch.Tensor)
-        else torch.as_tensor(observation, dtype=torch.float32)
-    )
-    if tensor.dim() == 3 and tensor.shape[-1] in {1, 3, 4, 6}:
-        tensor = tensor.permute(2, 0, 1)
-    tensor = tensor.float()
-    if tensor.max().item() > 1.0:
-        tensor = tensor / 255.0
-    return tensor
+    try:
+        # Converti a numpy prima se è un tensor per ridurre memoria
+        if isinstance(observation, torch.Tensor):
+            if observation.is_cuda:
+                observation = observation.cpu()
+            # Usa detach senza clone per evitare copia
+            arr = observation.detach().numpy() if observation.requires_grad else observation.numpy()
+        else:
+            arr = np.asarray(observation)
+        
+        # Controlla se serve normalizzazione prima di convertire
+        needs_norm = arr.max() > 1.0
+        
+        # Converti a float32 e normalizza in un solo passaggio
+        if needs_norm:
+            tensor = torch.from_numpy(arr.astype(np.float32) / 255.0)
+        else:
+            tensor = torch.from_numpy(arr.astype(np.float32))
+        
+        # Permuta se necessario
+        if tensor.dim() == 3 and tensor.shape[-1] in {1, 3, 4, 6}:
+            tensor = tensor.permute(2, 0, 1)
+        
+        return tensor
+    except (RuntimeError, MemoryError) as e:
+        if "not enough memory" in str(e) or isinstance(e, MemoryError):
+            # Forza garbage collection e riprova
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            raise RuntimeError(f"Out of memory in state preprocessing. Try reducing buffer capacity or batch size. Original error: {e}")
+        raise
 
 
 class FrameStackPreprocessor:
@@ -106,10 +127,12 @@ class FrameStackPreprocessor:
             return tensor
         if not self._buffer:
             for _ in range(self.stack_size):
-                self._buffer.append(tensor)
+                self._buffer.append(tensor.clone())  # Clone per evitare reference allo stesso tensor
         else:
             self._buffer.append(tensor)
-        return torch.cat(list(self._buffer), dim=0)
+        # Usa stack invece di cat per essere più efficiente
+        result = torch.stack(list(self._buffer), dim=0).flatten(0, 1)
+        return result
 
 
 @dataclass
@@ -135,7 +158,9 @@ class ReplayBuffer:
 
     def push(self, transition: Transition) -> None:
         if len(self.buffer) >= self.capacity:
-            self.buffer.pop(0)
+            # Rimuovi e libera esplicitamente l'elemento più vecchio
+            old = self.buffer.pop(0)
+            del old
         self.buffer.append(transition)
 
     def sample(self, batch_size: int) -> List[Transition]:
@@ -291,7 +316,9 @@ class GAILTrainer:
         state = self._prepare_state(obs)
 
         while steps_collected < num_steps:
-            action = select_action(self.policy, state, epsilon=epsilon, output_type=self.policy_output_type)
+            with torch.no_grad():  # Evita accumulo di gradienti
+                action = select_action(self.policy, state, epsilon=epsilon, output_type=self.policy_output_type)
+            
             next_obs, reward, terminated, truncated, _ = self.env.step(action)
             done = bool(terminated or truncated)
             next_state = self._prepare_state(next_obs)
@@ -307,6 +334,15 @@ class GAILTrainer:
 
             episode_return += reward
             steps_collected += 1
+            
+            # Libera memoria dello stato precedente
+            del state
+            
+            # Pulizia periodica della memoria ogni 500 step
+            if steps_collected % 500 == 0:
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
             if done:
                 episode_rewards.append(episode_return)
@@ -319,6 +355,10 @@ class GAILTrainer:
 
         if not episode_rewards:
             episode_rewards.append(episode_return)
+        
+        # Pulisci riferimenti ai tensori
+        del state, next_state
+        
         return {"steps": steps_collected, "episode_rewards": episode_rewards}
 
     def sample_expert_batch(self, batch_size: Optional[int] = None) -> dict:
@@ -365,6 +405,10 @@ class GAILTrainer:
             expert_acc = (torch.sigmoid(logits_expert) > 0.5).float().mean().item()
             agent_acc = (torch.sigmoid(logits_agent) < 0.5).float().mean().item()
 
+        # Libera memoria dei tensori intermedi
+        del expert_states, expert_actions, agent_states, agent_actions
+        del logits_expert, logits_agent, labels, logits
+        
         return {
             "loss": float(loss.item()),
             "expert_acc": expert_acc,
@@ -418,6 +462,8 @@ class GAILTrainer:
                     agent_batch = self.sample_agent_batch()
                     disc_metrics = self.update_discriminator(expert_batch, agent_batch)
                     disc_losses.append(disc_metrics)
+                    # Libera batch dopo l'uso
+                    del expert_batch, agent_batch
 
                 agent_batch = self.sample_agent_batch()
                 gail_rewards = self.compute_gail_rewards(agent_batch["states"], agent_batch["actions"])
@@ -428,6 +474,7 @@ class GAILTrainer:
                 avg_disc_loss = sum(m["loss"] for m in disc_losses) / max(len(disc_losses), 1)
                 avg_expert_acc = sum(m["expert_acc"] for m in disc_losses) / max(len(disc_losses), 1)
                 avg_agent_acc = sum(m["agent_acc"] for m in disc_losses) / max(len(disc_losses), 1)
+                
                 mean_reward = sum(rollout_stats["episode_rewards"]) / len(rollout_stats["episode_rewards"])
                 self._record_iteration_metrics(
                     iteration=iteration,
@@ -443,6 +490,15 @@ class GAILTrainer:
                     policy_updates=policy_updates,
                     gail_reward_mean=float(gail_rewards.mean().item()) if gail_rewards.numel() > 0 else 0.0,
                 )
+                
+                # Pulisci memoria DOPO aver registrato le metriche
+                del agent_batch, gail_rewards, disc_losses
+                
+                # Pulisci cache CUDA ogni iterazione
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                gc.collect()  # Forza garbage collection
 
                 if iteration % log_interval == 0:
                     print(
@@ -603,11 +659,23 @@ class GAILTrainer:
         return transitions
 
     def _transitions_to_batch(self, transitions: Sequence[Transition]) -> dict:
-        states = torch.stack([t.state for t in transitions]).to(self.device)  # (B, *state_shape)
-        actions = torch.tensor([t.action for t in transitions], dtype=torch.long, device=self.device)  # (B,)
-        next_states = torch.stack([t.next_state for t in transitions]).to(self.device)  # (B, *state_shape)
-        dones = torch.tensor([t.done for t in transitions], dtype=torch.float32, device=self.device)  # (B,)
-        rewards = torch.tensor([t.env_reward for t in transitions], dtype=torch.float32, device=self.device)  # (B,)
+        # Costruisci liste invece di stack immediato per ridurre picchi di memoria
+        states_list = [t.state for t in transitions]
+        actions_list = [t.action for t in transitions]
+        next_states_list = [t.next_state for t in transitions]
+        dones_list = [t.done for t in transitions]
+        rewards_list = [t.env_reward for t in transitions]
+        
+        # Crea tensori direttamente sul device target
+        states = torch.stack(states_list).to(self.device)
+        actions = torch.tensor(actions_list, dtype=torch.long, device=self.device)
+        next_states = torch.stack(next_states_list).to(self.device)
+        dones = torch.tensor(dones_list, dtype=torch.float32, device=self.device)
+        rewards = torch.tensor(rewards_list, dtype=torch.float32, device=self.device)
+        
+        # Pulisci liste
+        del states_list, actions_list, next_states_list, dones_list, rewards_list
+        
         return {
             "states": states,
             "actions": actions,
