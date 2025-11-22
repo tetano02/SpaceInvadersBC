@@ -131,6 +131,55 @@ class DataManager:
                 ])
         return filepath
 
+    def save_gail_metrics_csv(self, run_timestamp, run_id, metadata, iteration_metrics, target_path=None):
+        """Salva CSV con metadati e metriche per-iterazione del training GAIL."""
+        filepath = Path(target_path) if target_path else self.get_metrics_filepath(run_timestamp, run_id)
+        self._ensure_metrics_header(filepath)
+        with open(filepath, 'a', newline='', encoding='utf-8') as csv_file:
+            writer = csv.writer(csv_file)
+            for key, value in metadata.items():
+                writer.writerow(["gail_metadata", key, value, "", "", "", ""])
+            writer.writerow([])
+            writer.writerow([
+                "section_header",
+                "gail_metrics",
+                "Iteration",
+                "DiscLoss",
+                "ExpertAcc",
+                "AgentAcc",
+                "PolicyLoss"
+            ])
+            for metrics in iteration_metrics:
+                writer.writerow([
+                    "gail_iteration",
+                    metrics.get('iteration'),
+                    round(metrics.get('disc_loss', 0.0), 6),
+                    round(metrics.get('expert_acc', 0.0), 6),
+                    round(metrics.get('agent_acc', 0.0), 6),
+                    round(metrics.get('policy_loss', 0.0), 6),
+                    ""
+                ])
+                writer.writerow([
+                    "gail_iteration_details",
+                    metrics.get('iteration'),
+                    metrics.get('policy_mode'),
+                    metrics.get('steps'),
+                    metrics.get('epsilon'),
+                    metrics.get('disc_updates'),
+                    metrics.get('policy_updates')
+                ])
+                writer.writerow([
+                    "gail_iteration_return",
+                    metrics.get('iteration'),
+                    round(metrics.get('mean_return', 0.0), 6),
+                    metrics.get('gail_reward_mean'),
+                    "",
+                    "",
+                    ""
+                ])
+            writer.writerow([])
+        return filepath
+
     def append_evaluation_results(self, csv_path, evaluation_summary, episode_metrics, metadata=None):
         """Aggiunge i risultati della valutazione al CSV esistente."""
         csv_path = Path(csv_path)
