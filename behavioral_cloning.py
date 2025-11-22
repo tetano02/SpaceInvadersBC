@@ -97,76 +97,6 @@ class BCMLPPolicy(nn.Module):
         return self.network(x)
 
 
-class BCVisionTransformer(nn.Module):
-    """Vision Transformer compatto per osservazioni Atari."""
-
-    def __init__(
-        self,
-        num_actions=6,
-        image_size=(210, 160),
-        patch_size=(14, 16),
-        embed_dim=256,
-        depth=6,
-        num_heads=8,
-        mlp_ratio=4.0,
-        dropout=0.1,
-    ):
-        super().__init__()
-        self.image_size = image_size
-        self.patch_size = patch_size
-
-        if image_size[0] % patch_size[0] != 0 or image_size[1] % patch_size[1] != 0:
-            raise ValueError("patch_size deve dividere esattamente image_size per altezza e larghezza")
-
-        self.patch_embed = nn.Conv2d(
-            in_channels=3,
-            out_channels=embed_dim,
-            kernel_size=patch_size,
-            stride=patch_size,
-        )
-        num_patches = (image_size[0] // patch_size[0]) * (image_size[1] // patch_size[1])
-
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
-        self.pos_drop = nn.Dropout(dropout)
-
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim,
-            nhead=num_heads,
-            dim_feedforward=int(embed_dim * mlp_ratio),
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=depth)
-        self.norm = nn.LayerNorm(embed_dim)
-        self.head = nn.Linear(embed_dim, num_actions)
-
-        self._init_weights()
-
-    def _init_weights(self):
-        nn.init.trunc_normal_(self.cls_token, std=0.02)
-        nn.init.trunc_normal_(self.pos_embed, std=0.02)
-        nn.init.trunc_normal_(self.head.weight, std=0.02)
-        if self.head.bias is not None:
-            nn.init.zeros_(self.head.bias)
-
-    def forward(self, x):
-        x = self.patch_embed(x)  # (B, embed_dim, H', W')
-        x = x.flatten(2).transpose(1, 2)  # (B, num_patches, embed_dim)
-
-        batch_size = x.size(0)
-        cls_tokens = self.cls_token.expand(batch_size, -1, -1)
-        x = torch.cat((cls_tokens, x), dim=1)
-        x = x + self.pos_embed
-        x = self.pos_drop(x)
-
-        x = self.transformer(x)
-        x = self.norm(x[:, 0])
-        return self.head(x)
-
-
 MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
     "dqn": {
         "label": "DQN CNN",
@@ -177,11 +107,6 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
         "label": "Multi-Layer Perceptron",
         "description": "Rete fully-connected su osservazione flattenata",
         "builder": lambda num_actions: BCMLPPolicy(num_actions=num_actions),
-    },
-    "vit": {
-        "label": "Vision Transformer",
-        "description": "Transformer compatto con patch embedding (più esigente in VRAM)",
-        "builder": lambda num_actions: BCVisionTransformer(num_actions=num_actions),
     },
 }
 
@@ -479,133 +404,23 @@ class BCTrainer:
             self.val_accuracies = checkpoint["val_accuracies"]
 
 
-def get_available_devices():
-    """Restituisce una lista di dispositivi disponibili con i loro nomi."""
-    devices = []
-    
-    # CPU è sempre disponibile
-    devices.append({"name": "CPU", "device": "cpu"})
-    
-    # Controlla disponibilità GPU
-    if torch.cuda.is_available():
-        for i in range(torch.cuda.device_count()):
-            gpu_name = torch.cuda.get_device_name(i)
-            devices.append({"name": f"GPU {i}: {gpu_name}", "device": f"cuda:{i}"})
-    
-    return devices
-
-
-def select_device():
-    """Chiede all'utente di selezionare un dispositivo per il training."""
-    devices = get_available_devices()
-    
-    print("\nDispositivi disponibili:")
-    for idx, device_info in enumerate(devices, 1):
-        print(f"  {idx}. {device_info['name']}")
-    
-    while True:
-        choice = input(f"\nSeleziona dispositivo (1-{len(devices)}) [default: 1]: ").strip()
-        
-        # Default a CPU (opzione 1)
-        if not choice:
-            choice = "1"
-        
-        try:
-            choice_idx = int(choice) - 1
-            if 0 <= choice_idx < len(devices):
-                selected_device = devices[choice_idx]
-                print(f"Dispositivo selezionato: {selected_device['name']}")
-                return selected_device['device']
-            else:
-                print(f"⚠ Scelta non valida! Seleziona un numero tra 1 e {len(devices)}.")
-        except ValueError:
-            print(f"⚠ Input non valido! Inserisci un numero tra 1 e {len(devices)}.")
-
-
 def load_demonstrations(filepath):
     """Carica dimostrazioni da file usando DataManager."""
     data_manager = DataManager()
     return data_manager.load_demonstrations(filepath)
 
 
-def select_demonstration_files(demo_files):
-    """Permette all'utente di scegliere uno o più file di dimostrazioni."""
-    sorted_files = sorted(demo_files, key=lambda p: p.stat().st_mtime, reverse=True)
-
-    print("\nFile di dimostrazioni disponibili:")
-    for idx, demo_path in enumerate(sorted_files, 1):
-        timestamp = datetime.fromtimestamp(demo_path.stat().st_mtime)
-        size_mb = demo_path.stat().st_size / (1024 * 1024)
-        print(
-            f"  {idx}. {demo_path.name}"
-            f" | modificato il {timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
-            f" | {size_mb:.2f} MB"
-        )
-
-    print(
-        "\nPuoi inserire un solo numero (es. 1) oppure più numeri separati da virgola"
-        " (es. 1,3,4) per aggregare le dimostrazioni."
-    )
-
-    while True:
-        raw_choice = input(
-            f"Seleziona file (1-{len(sorted_files)}) [default: 1]: "
-        ).strip()
-        if not raw_choice:
-            raw_choice = "1"
-
-        parts = [part.strip() for part in raw_choice.split(",") if part.strip()]
-        indices = []
-        try:
-            for part in parts:
-                idx = int(part) - 1
-                if 0 <= idx < len(sorted_files):
-                    indices.append(idx)
-                else:
-                    raise ValueError
-        except ValueError:
-            print(
-                f"⚠ Input non valido! Inserisci numeri tra 1 e {len(sorted_files)}"
-                " separati da virgola."
-            )
-            continue
-
-        unique_indices = []
-        seen = set()
-        for idx in indices:
-            if idx not in seen:
-                unique_indices.append(idx)
-                seen.add(idx)
-
-        if not unique_indices:
-            print("⚠ Nessun indice valido rilevato, riprova.")
-            continue
-
-        selected = [sorted_files[idx] for idx in unique_indices]
-        if len(selected) == 1:
-            print(f"Userai il file: {selected[0]}\n")
-        else:
-            print("Userai i file:")
-            for path in selected:
-                print(f"  - {path}")
-            print()
-        return selected
-
-
 def train_bc_model(
-    demonstrations_files,
+    demonstrations_file,
     num_epochs=50,
     batch_size=32,
     val_split=0.2,
-    device=None,
     model_type=DEFAULT_MODEL_TYPE,
 ):
     """Funzione principale per addestrare il modello BC."""
-    print("Caricamento dimostrazioni da:")
-    demonstrations = []
-    for demo_file in demonstrations_files:
-        print(f"  - {demo_file}")
-        demonstrations.extend(load_demonstrations(demo_file))
+    # Carica dimostrazioni
+    print(f"Caricamento dimostrazioni da: {demonstrations_file}")
+    demonstrations = load_demonstrations(demonstrations_file)
 
     # Crea dataset
     full_dataset = BCDataset(demonstrations)
@@ -625,16 +440,14 @@ def train_bc_model(
 
     # Crea modello e trainer
     policy = build_policy(model_type=model_type, num_actions=6)
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    trainer = BCTrainer(policy, model_type=model_type, device=device)
+    trainer = BCTrainer(policy, model_type=model_type)
     environment_name = "ALE/SpaceInvaders-v5"
     trainer.configure_run(
         {
             "environment_name": environment_name,
             "training_type": "behavioral_cloning",
             "model_type": model_type,
-            "demonstration_files": [str(Path(path)) for path in demonstrations_files],
+            "demonstration_files": [str(Path(demonstrations_file))],
             "num_demonstrations": len(demonstrations),
             "num_epochs": num_epochs,
             "batch_size": batch_size,
@@ -669,28 +482,21 @@ def main(selected_model_type=None):
         print("Esegui prima 'collect_demonstrations.py' per raccogliere dati.")
         return
 
-    # Permetti all'utente di scegliere uno o più file da usare (default: più recente)
-    selected_demo_files = select_demonstration_files(demo_files)
-    print("Userai le seguenti dimostrazioni:")
-    for path in selected_demo_files:
-        print(f"  - {path}")
-    print()
+    # Usa file più recente
+    latest_demo_file = min(demo_files, key=lambda p: p.stat().st_mtime)
+    print(f"Usando dimostrazioni da: {latest_demo_file}\n")
 
     model_type = selected_model_type or prompt_model_type()
 
     # Parametri training
     num_epochs = int(input("Numero di epochs [default: 50]: ") or "50")
     batch_size = int(input("Batch size [default: 32]: ") or "32")
-    
-    # Selezione dispositivo
-    device = select_device()
 
     # Addestra modello
     policy = train_bc_model(
-        selected_demo_files,
+        latest_demo_file,
         num_epochs=num_epochs,
         batch_size=batch_size,
-        device=device,
         model_type=model_type,
     )
 

@@ -61,8 +61,9 @@ def main():
         print("  1. Raccogli dimostrazioni (gioca manualmente)")
         print("  2. Carica dataset esperto da Minari")
         print("  3. Addestra modello con Behavioral Cloning (scegli architettura)")
-        print("  4. Valuta policy appresa")
-        print("  5. Pipeline completa (raccolta + training + valutazione)")
+        print("  4. Test policy appresa")
+        print("  5. Analizza dimostrazioni salvate")
+        print("  6. Riproduci dimostrazioni salvate")
         print("  0. Esci")
 
         choice = input("\nScelta: ").strip()
@@ -114,43 +115,19 @@ def main():
 
         elif choice == "5":
             print("\n" + "=" * 60)
-            print("PIPELINE COMPLETA")
+            print("ANALISI DIMOSTRAZIONI")
             print("=" * 60)
+            from analyze_demonstrations import main as analyze_main
 
-            # Step 1: Raccolta
-            print("\n[Step 1/3] Raccolta dimostrazioni...")
-            from collect_demonstrations import main as collect_main
+            analyze_main()
+        
+        elif choice == "6":
+            print("\n" + "=" * 60)
+            print("RIPRODUZIONE DIMOSTRAZIONI")
+            print("=" * 60)
+            from reply_demonstrations import main as reply_main
 
-            collect_main()
-
-            # Controlla se sono state raccolte dimostrazioni
-            has_demos, _ = check_demonstrations()
-            if not has_demos:
-                print("\n⚠ Nessuna dimostrazione raccolta. Pipeline interrotta.")
-                input("\nPremi ENTER per continuare...")
-                continue
-
-            # Step 2: Training
-            print("\n[Step 2/3] Training modello...")
-            from behavioral_cloning import main as train_main, prompt_model_type
-
-            selected_model = prompt_model_type()
-            train_main(selected_model_type=selected_model)
-
-            # Controlla se il modello è stato creato
-            has_models, _ = check_models()
-            if not has_models:
-                print("\n⚠ Nessun modello creato. Pipeline interrotta.")
-                input("\nPremi ENTER per continuare...")
-                continue
-
-            # Step 3: Valutazione
-            print("\n[Step 3/3] Valutazione policy...")
-            from evaluate_bc import main as eval_main
-
-            eval_main()
-
-            print("\n✓ Pipeline completata!")
+            reply_main()
 
         elif choice == "0":
             print("\nArrivederci!")

@@ -492,3 +492,65 @@ class DataManager:
             'timestamp': data.get('timestamp', 'N/A'),
             'filepath': filepath
         }
+    
+    def merge_demonstrations(self, demo_filepaths, output_filename=None):
+        """
+        Unisce più file di dimostrazioni in un unico file.
+        I file originali non vengono modificati o eliminati.
+        
+        Args:
+            demo_filepaths: Lista di percorsi ai file di dimostrazioni da unire
+            output_filename: Nome del file di output (opzionale, altrimenti generato automaticamente)
+        
+        Returns:
+            tuple: (Path del file unito, ID generato)
+        """
+        if not demo_filepaths:
+            print("Nessun file da unire!")
+            return None, None
+        
+        all_demonstrations = []
+        sources = []
+        
+        print(f"\n📂 Unione di {len(demo_filepaths)} file di dimostrazioni...")
+        
+        # Carica e combina tutte le dimostrazioni
+        for filepath in demo_filepaths:
+            filepath = Path(filepath)
+            if not filepath.exists():
+                print(f"⚠ File non trovato: {filepath} - Saltato")
+                continue
+            
+            with open(filepath, 'rb') as f:
+                data = pickle.load(f)
+            
+            demonstrations = data['demonstrations']
+            num_episodes = len(demonstrations)
+            total_steps = sum(len(ep['actions']) for ep in demonstrations)
+            source = data.get('source', 'unknown')
+            
+            all_demonstrations.extend(demonstrations)
+            sources.append(source)
+            
+            print(f"  ✓ Caricato {filepath.name}: {num_episodes} episodi, {total_steps} steps (source: {source})")
+        
+        if not all_demonstrations:
+            print("Nessuna dimostrazione valida trovata!")
+            return None, None
+        
+        # Crea la stringa source combinata
+        unique_sources = list(dict.fromkeys(sources))  # Rimuove duplicati mantenendo l'ordine
+        combined_source = f"merged:{'+'.join(unique_sources)}"
+        
+        # Salva il file unito
+        merged_filepath, merged_id = self.save_demonstrations(
+            demonstrations=all_demonstrations,
+            filename=output_filename,
+            source=combined_source
+        )
+        
+        print(f"\n✅ Unione completata!")
+        print(f"  File originali mantenuti: {len(demo_filepaths)}")
+        print(f"  Totale episodi uniti: {len(all_demonstrations)}")
+        
+        return merged_filepath, merged_id
