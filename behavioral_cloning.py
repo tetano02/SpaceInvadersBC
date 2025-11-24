@@ -13,6 +13,21 @@ from typing import Any, Dict
 import math
 from data_manager import DataManager
 
+# Import TPU support (opzionale, per Google Colab)
+try:
+    import torch_xla
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.parallel_loader as pl
+
+    TPU_AVAILABLE = True
+except ImportError:
+    TPU_AVAILABLE = False
+    xm = None
+    print("ℹ️  TPU non disponibile. Per usare TPU su Google Colab, esegui:")
+    print("   !pip install torch_xla")
+    print("   Poi riavvia il runtime e riesegui il codice.")
+    print()
+
 
 class BCDataset(Dataset):
     """Dataset per Behavioral Cloning."""
@@ -37,14 +52,18 @@ class BCDataset(Dataset):
             for obs, action in zip(episode["observations"], episode["actions"]):
                 if prev_obs is None:
                     prev_obs = obs
-                self.samples.append({
-                    "current": obs,
-                    "previous": prev_obs,
-                    "action": action,
-                })
+                self.samples.append(
+                    {
+                        "current": obs,
+                        "previous": prev_obs,
+                        "action": action,
+                    }
+                )
                 prev_obs = obs
 
-        print(f"Dataset creato con {len(self.samples)} campioni (frame_mode={self.frame_mode})")
+        print(
+            f"Dataset creato con {len(self.samples)} campioni (frame_mode={self.frame_mode})"
+        )
 
     def __len__(self):
         return len(self.samples)
@@ -134,7 +153,9 @@ class BCVisionTransformer(nn.Module):
         self.patch_size = patch_size
 
         if image_size[0] % patch_size[0] != 0 or image_size[1] % patch_size[1] != 0:
-            raise ValueError("patch_size deve dividere esattamente image_size per altezza e larghezza")
+            raise ValueError(
+                "patch_size deve dividere esattamente image_size per altezza e larghezza"
+            )
 
         self.patch_embed = nn.Conv2d(
             in_channels=in_channels,
@@ -142,7 +163,9 @@ class BCVisionTransformer(nn.Module):
             kernel_size=patch_size,
             stride=patch_size,
         )
-        num_patches = (image_size[0] // patch_size[0]) * (image_size[1] // patch_size[1])
+        num_patches = (image_size[0] // patch_size[0]) * (
+            image_size[1] // patch_size[1]
+        )
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
@@ -189,17 +212,23 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
     "dqn": {
         "label": "DQN CNN",
         "description": "CNN con tre conv e testa fully-connected (default)",
-        "builder": lambda num_actions, **kwargs: BCPolicy(num_actions=num_actions, **kwargs),
+        "builder": lambda num_actions, **kwargs: BCPolicy(
+            num_actions=num_actions, **kwargs
+        ),
     },
     "mlp": {
         "label": "Multi-Layer Perceptron",
         "description": "Rete fully-connected su osservazione flattenata",
-        "builder": lambda num_actions, **kwargs: BCMLPPolicy(num_actions=num_actions, **kwargs),
+        "builder": lambda num_actions, **kwargs: BCMLPPolicy(
+            num_actions=num_actions, **kwargs
+        ),
     },
     "vit": {
         "label": "Vision Transformer",
         "description": "Transformer compatto con patch embedding (più esigente in VRAM)",
-        "builder": lambda num_actions, **kwargs: BCVisionTransformer(num_actions=num_actions, **kwargs),
+        "builder": lambda num_actions, **kwargs: BCVisionTransformer(
+            num_actions=num_actions, **kwargs
+        ),
     },
 }
 
@@ -243,7 +272,10 @@ def prompt_model_type(default: str = DEFAULT_MODEL_TYPE):
 
 def prompt_frame_mode(default: str = "single"):
     """Chiede se usare un solo frame o due frame concatenati."""
-    choices = [("single", "Frame singolo (3 canali)"), ("stacked", "Due frame consecutivi (6 canali)")]
+    choices = [
+        ("single", "Frame singolo (3 canali)"),
+        ("stacked", "Due frame consecutivi (6 canali)"),
+    ]
     print("\n=== SELEZIONE TIPO DI INPUT ===")
     for idx, (key, label) in enumerate(choices, start=1):
         default_tag = " (default)" if key == default else ""
@@ -270,8 +302,16 @@ class BCTrainer:
         learning_rate=1e-4,
         device="cuda" if torch.cuda.is_available() else "cpu",
     ):
-        self.policy = policy.to(device)
-        self.device = device
+        # Gestione TPU
+        self.is_tpu = device == "tpu"
+        if self.is_tpu:
+            if not TPU_AVAILABLE:
+                raise RuntimeError("TPU selezionata ma torch_xla non è disponibile")
+            self.device = xm.xla_device()
+        else:
+            self.device = device
+
+        self.policy = policy.to(self.device)
         self.model_type = (model_type or DEFAULT_MODEL_TYPE).lower()
         self.optimizer = optim.Adam(self.policy.parameters(), lr=learning_rate)
         self.criterion = nn.CrossEntropyLoss()
@@ -309,7 +349,8 @@ class BCTrainer:
         self.run_metadata.update(metadata)
         self.run_metadata.setdefault("model_type", self.model_type)
         self.run_metadata.setdefault(
-            "model_label", MODEL_REGISTRY.get(self.model_type, {}).get("label", self.model_type)
+            "model_label",
+            MODEL_REGISTRY.get(self.model_type, {}).get("label", self.model_type),
         )
 
     def train_epoch(self, train_loader):
@@ -318,10 +359,21 @@ class BCTrainer:
         total_loss = 0
         correct = 0
         total = 0
-        total_batches = len(train_loader)
-        progress_interval = max(1, math.ceil(total_batches * 0.05)) if total_batches else 1
 
-        for batch_idx, (observations, actions) in enumerate(train_loader):
+        # Per TPU, usa ParallelLoader per efficienza
+        if self.is_tpu:
+            loader = pl.ParallelLoader(train_loader, [self.device]).per_device_loader(
+                self.device
+            )
+        else:
+            loader = train_loader
+
+        total_batches = len(train_loader)
+        progress_interval = (
+            max(1, math.ceil(total_batches * 0.05)) if total_batches else 1
+        )
+
+        for batch_idx, (observations, actions) in enumerate(loader):
             observations = observations.to(self.device)
             actions = actions.squeeze(-1).to(self.device)
 
@@ -332,7 +384,13 @@ class BCTrainer:
             # Backward pass
             self.optimizer.zero_grad()
             loss.backward()
-            self.optimizer.step()
+
+            # Per TPU, usa xm.optimizer_step per sincronizzare
+            if self.is_tpu:
+                xm.optimizer_step(self.optimizer)
+                xm.mark_step()  # Sincronizza il grafo XLA
+            else:
+                self.optimizer.step()
 
             # Statistiche
             total_loss += loss.item()
@@ -340,7 +398,9 @@ class BCTrainer:
             total += actions.size(0)
             correct += (predicted == actions).sum().item()
 
-            if (batch_idx + 1) % progress_interval == 0 or (batch_idx + 1) == total_batches:
+            if (batch_idx + 1) % progress_interval == 0 or (
+                batch_idx + 1
+            ) == total_batches:
                 avg_loss_so_far = total_loss / (batch_idx + 1)
                 model_tag = self.model_type.upper()
                 print(
@@ -360,8 +420,16 @@ class BCTrainer:
         correct = 0
         total = 0
 
+        # Per TPU, usa ParallelLoader per efficienza
+        if self.is_tpu:
+            loader = pl.ParallelLoader(val_loader, [self.device]).per_device_loader(
+                self.device
+            )
+        else:
+            loader = val_loader
+
         with torch.no_grad():
-            for observations, actions in val_loader:
+            for observations, actions in loader:
                 observations = observations.to(self.device)
                 actions = actions.squeeze(-1).to(self.device)
 
@@ -498,9 +566,21 @@ class BCTrainer:
             "metrics_csv_path": str(self.metrics_csv_path),
             "model_type": self.run_metadata.get("model_type", self.model_type),
         }
+
+        # Per TPU, sposta i tensori su CPU prima di salvare
+        if self.is_tpu:
+            model_state = {k: v.cpu() for k, v in self.policy.state_dict().items()}
+            optimizer_state = {
+                k: v.cpu() if isinstance(v, torch.Tensor) else v
+                for k, v in self.optimizer.state_dict().items()
+            }
+        else:
+            model_state = self.policy.state_dict()
+            optimizer_state = self.optimizer.state_dict()
+
         save_kwargs = dict(
-            model_state_dict=self.policy.state_dict(),
-            optimizer_state_dict=self.optimizer.state_dict(),
+            model_state_dict=model_state,
+            optimizer_state_dict=optimizer_state,
             train_losses=self.train_losses,
             val_losses=self.val_losses,
             train_accuracies=self.train_accuracies,
@@ -539,42 +619,60 @@ class BCTrainer:
 def get_available_devices():
     """Restituisce una lista di dispositivi disponibili con i loro nomi."""
     devices = []
-    
+
     # CPU è sempre disponibile
     devices.append({"name": "CPU", "device": "cpu"})
-    
+
+    # Controlla disponibilità TPU (Google Colab)
+    if TPU_AVAILABLE:
+        # Su Colab, la TPU è disponibile se torch_xla è importato con successo
+        devices.append({"name": "TPU (Google Colab/Kaggle)", "device": "tpu"})
+        print(
+            "se su google colab usare 'python main.py' per eseguire lo script e usare la tpu"
+        )
+
     # Controlla disponibilità GPU
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
             gpu_name = torch.cuda.get_device_name(i)
             devices.append({"name": f"GPU {i}: {gpu_name}", "device": f"cuda:{i}"})
-    
+
     return devices
 
 
 def select_device():
     """Chiede all'utente di selezionare un dispositivo per il training."""
     devices = get_available_devices()
-    
+
     print("\nDispositivi disponibili:")
     for idx, device_info in enumerate(devices, 1):
         print(f"  {idx}. {device_info['name']}")
-    
+
+    if not TPU_AVAILABLE:
+        print("\n💡 Per abilitare TPU su Google Colab:")
+        print("   1. Esegui: !pip install torch_xla")
+        print("   2. Riavvia il runtime (Runtime > Restart runtime)")
+        print("   3. Riesegui questo script")
+
     while True:
-        choice = input(f"\nSeleziona dispositivo (1-{len(devices)}) [default: 1]: ").strip()
-        
+        choice = input(
+            f"\nSeleziona dispositivo (1-{len(devices)}) [default: 1]: "
+        ).strip()
+
         # Default a CPU (opzione 1)
         if not choice:
             choice = "1"
-        
+
         try:
             choice_idx = int(choice) - 1
             if 0 <= choice_idx < len(devices):
                 selected_device = devices[choice_idx]
                 print(f"Dispositivo selezionato: {selected_device['name']}")
-                return selected_device['device']
+                return selected_device["device"]
             else:
-                print(f"⚠ Scelta non valida! Seleziona un numero tra 1 e {len(devices)}.")
+                print(
+                    f"⚠ Scelta non valida! Seleziona un numero tra 1 e {len(devices)}."
+                )
         except ValueError:
             print(f"⚠ Input non valido! Inserisci un numero tra 1 e {len(devices)}.")
 
@@ -693,13 +791,17 @@ def train_bc_model(
 
     # Crea modello e trainer
     input_channels = 6 if frame_mode == "stacked" else 3
-    policy = build_policy(model_type=model_type, num_actions=6, in_channels=input_channels)
+    policy = build_policy(
+        model_type=model_type, num_actions=6, in_channels=input_channels
+    )
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     trainer = BCTrainer(policy, model_type=model_type, device=device)
     environment_name = "ALE/SpaceInvaders-v5"
     demo_file_paths = [str(Path(path)) for path in demonstrations_files]
-    dataset_label = Path(demonstrations_files[0]).name if demonstrations_files else "Unknown"
+    dataset_label = (
+        Path(demonstrations_files[0]).name if demonstrations_files else "Unknown"
+    )
     if len(demonstrations_files) > 1:
         dataset_label = f"{dataset_label} (+{len(demonstrations_files) - 1})"
 
@@ -755,7 +857,7 @@ def main(selected_model_type=None):
     # Parametri training
     num_epochs = int(input("Numero di epochs [default: 50]: ") or "50")
     batch_size = int(input("Batch size [default: 32]: ") or "32")
-    
+
     # Selezione dispositivo
     device = select_device()
 
