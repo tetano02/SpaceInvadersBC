@@ -536,17 +536,125 @@ class BCTrainer:
             self.val_accuracies = checkpoint["val_accuracies"]
 
 
+def get_available_devices():
+    """Restituisce una lista di dispositivi disponibili con i loro nomi."""
+    devices = []
+    
+    # CPU è sempre disponibile
+    devices.append({"name": "CPU", "device": "cpu"})
+    
+    # Controlla disponibilità GPU
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            gpu_name = torch.cuda.get_device_name(i)
+            devices.append({"name": f"GPU {i}: {gpu_name}", "device": f"cuda:{i}"})
+    
+    return devices
+
+
+def select_device():
+    """Chiede all'utente di selezionare un dispositivo per il training."""
+    devices = get_available_devices()
+    
+    print("\nDispositivi disponibili:")
+    for idx, device_info in enumerate(devices, 1):
+        print(f"  {idx}. {device_info['name']}")
+    
+    while True:
+        choice = input(f"\nSeleziona dispositivo (1-{len(devices)}) [default: 1]: ").strip()
+        
+        # Default a CPU (opzione 1)
+        if not choice:
+            choice = "1"
+        
+        try:
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(devices):
+                selected_device = devices[choice_idx]
+                print(f"Dispositivo selezionato: {selected_device['name']}")
+                return selected_device['device']
+            else:
+                print(f"⚠ Scelta non valida! Seleziona un numero tra 1 e {len(devices)}.")
+        except ValueError:
+            print(f"⚠ Input non valido! Inserisci un numero tra 1 e {len(devices)}.")
+
+
 def load_demonstrations(filepath):
     """Carica dimostrazioni da file usando DataManager."""
     data_manager = DataManager()
     return data_manager.load_demonstrations(filepath)
 
 
+def select_demonstration_files(demo_files):
+    """Permette all'utente di scegliere uno o più file di dimostrazioni."""
+    sorted_files = sorted(demo_files, key=lambda p: p.stat().st_mtime, reverse=True)
+
+    print("\nFile di dimostrazioni disponibili:")
+    for idx, demo_path in enumerate(sorted_files, 1):
+        timestamp = datetime.fromtimestamp(demo_path.stat().st_mtime)
+        size_mb = demo_path.stat().st_size / (1024 * 1024)
+        print(
+            f"  {idx}. {demo_path.name}"
+            f" | modificato il {timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            f" | {size_mb:.2f} MB"
+        )
+
+    print(
+        "\nPuoi inserire un solo numero (es. 1) oppure più numeri separati da virgola"
+        " (es. 1,3,4) per aggregare le dimostrazioni."
+    )
+
+    while True:
+        raw_choice = input(
+            f"Seleziona file (1-{len(sorted_files)}) [default: 1]: "
+        ).strip()
+        if not raw_choice:
+            raw_choice = "1"
+
+        parts = [part.strip() for part in raw_choice.split(",") if part.strip()]
+        indices = []
+        try:
+            for part in parts:
+                idx = int(part) - 1
+                if 0 <= idx < len(sorted_files):
+                    indices.append(idx)
+                else:
+                    raise ValueError
+        except ValueError:
+            print(
+                f"⚠ Input non valido! Inserisci numeri tra 1 e {len(sorted_files)}"
+                " separati da virgola."
+            )
+            continue
+
+        unique_indices = []
+        seen = set()
+        for idx in indices:
+            if idx not in seen:
+                unique_indices.append(idx)
+                seen.add(idx)
+
+        if not unique_indices:
+            print("⚠ Nessun indice valido rilevato, riprova.")
+            continue
+
+        selected = [sorted_files[idx] for idx in unique_indices]
+        if len(selected) == 1:
+            print(f"Userai il file: {selected[0]}\n")
+        else:
+            print("Userai i file:")
+            for path in selected:
+                print(f"  - {path}")
+            print()
+        return selected
+
+
 def train_bc_model(
-    demonstrations_file,
+    demonstrations_files,
     num_epochs=50,
     batch_size=32,
     val_split=0.2,
+    device=None,
     model_type=DEFAULT_MODEL_TYPE,
     frame_mode: str = "single",
 ):
@@ -634,9 +742,12 @@ def main(selected_model_type=None):
         print("Esegui prima 'collect_demonstrations.py' per raccogliere dati.")
         return
 
-    # Usa file più recente
-    latest_demo_file = min(demo_files, key=lambda p: p.stat().st_mtime)
-    print(f"Usando dimostrazioni da: {latest_demo_file}\n")
+    # Permetti all'utente di scegliere uno o più file da usare (default: più recente)
+    selected_demo_files = select_demonstration_files(demo_files)
+    print("Userai le seguenti dimostrazioni:")
+    for path in selected_demo_files:
+        print(f"  - {path}")
+    print()
 
     model_type = selected_model_type or prompt_model_type()
     frame_mode = prompt_frame_mode()
@@ -644,12 +755,16 @@ def main(selected_model_type=None):
     # Parametri training
     num_epochs = int(input("Numero di epochs [default: 50]: ") or "50")
     batch_size = int(input("Batch size [default: 32]: ") or "32")
+    
+    # Selezione dispositivo
+    device = select_device()
 
     # Addestra modello
-    policy = train_bc_model(
-        latest_demo_file,
+    train_bc_model(
+        selected_demo_files,
         num_epochs=num_epochs,
         batch_size=batch_size,
+        device=device,
         model_type=model_type,
         frame_mode=frame_mode,
     )
