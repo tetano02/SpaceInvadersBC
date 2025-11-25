@@ -12,7 +12,7 @@ def print_banner():
     """Stampa il banner del progetto."""
     print("\n" + "=" * 60)
     print("  BEHAVIORAL CLONING - Space Invaders")
-    print("  CTRL+C - CTRL+PAC")
+    # print("  CTRL+C - CTRL+PAC")
     print("=" * 60)
 
 
@@ -142,19 +142,31 @@ def improve_model_with_gail(demo_files, model_files):
     env = make_space_invaders_env(render_mode=None)
     num_actions = env.action_space.n
 
-    policy = build_policy(model_type=model_type, num_actions=num_actions, in_channels=input_channels)
+    policy = build_policy(
+        model_type=model_type, num_actions=num_actions, in_channels=input_channels
+    )
     policy_mode = "q_values" if model_type.lower() == "dqn" else "logits"
     preprocessor = FrameStackPreprocessor(stack_size=stack_size)
-    discriminator = Discriminator(observation_shape=observation_shape, num_actions=num_actions)
+    discriminator = Discriminator(
+        observation_shape=observation_shape, num_actions=num_actions
+    )
 
     print("\nConfigura training GAIL:")
     num_iterations = prompt_int_input("Iterazioni GAIL [default: 20]: ", 20)
-    steps_per_collect = prompt_int_input("Passi raccolti per iterazione [default: 2048]: ", 2048)
-    disc_updates = prompt_int_input("Aggiornamenti discriminatore per iterazione [default: 5]: ", 5)
-    policy_updates = prompt_int_input("Aggiornamenti policy per iterazione [default: 1]: ", 1)
+    steps_per_collect = prompt_int_input(
+        "Passi raccolti per iterazione [default: 2048]: ", 2048
+    )
+    disc_updates = prompt_int_input(
+        "Aggiornamenti discriminatore per iterazione [default: 5]: ", 5
+    )
+    policy_updates = prompt_int_input(
+        "Aggiornamenti policy per iterazione [default: 1]: ", 1
+    )
     epsilon = prompt_float_input("Epsilon esplorazione [default: 0.05]: ", 0.05)
     # Ridotta capacità buffer per ridurre uso memoria
-    buffer_capacity = prompt_int_input("Capacità agent buffer [default: 50000]: ", 50000)
+    buffer_capacity = prompt_int_input(
+        "Capacità agent buffer [default: 50000]: ", 50000
+    )
 
     trainer = GAILTrainer(
         policy=policy,
@@ -188,48 +200,51 @@ def improve_model_with_gail(demo_files, model_files):
         if timestamp and model_id:
             print(f"  ID run: {timestamp}_{model_id}")
     else:
-        print("Modello non salvato. Puoi sempre rieseguire il training GAIL in seguito.")
+        print(
+            "Modello non salvato. Puoi sempre rieseguire il training GAIL in seguito."
+        )
 
 
 def main():
-    """Menu principale."""
+    """Main menu."""
+
     print_banner()
 
     while True:
         print("\n" + "-" * 60)
-        print("MENU PRINCIPALE")
+        print("MAIN MENU")
         print("-" * 60)
 
-        # Controlla stato del progetto
+        # check state of project
         has_demos, demo_files = check_demonstrations()
         has_models, model_files = check_models()
 
-        print("\nStato del progetto:")
+        print("\nState of the project:")
         if has_demos:
-            print(f"  ✓ Dimostrazioni disponibili: {len(demo_files)} file(s)")
+            print(f"  ✓ Available demonstrations: {len(demo_files)} file(s)")
         else:
-            print(f"  ✗ Nessuna dimostrazione trovata")
+            print(f"  ✗ No demonstrations found")
 
         if has_models:
-            print(f"  ✓ Modelli addestrati: {len(model_files)} file(s)")
+            print(f"  ✓ Trained models: {len(model_files)} file(s)")
         else:
-            print(f"  ✗ Nessun modello trovato")
+            print(f"  ✗ No model found")
 
-        print("\nOpzioni:")
-        print("  1. Raccogli dimostrazioni (gioca manualmente)")
-        print("  2. Carica dataset esperto da Minari")
-        print("  3. Addestra modello con Behavioral Cloning (scegli architettura)")
-        print("  4. Test policy appresa")
-        print("  5. Analizza dimostrazioni salvate")
-        print("  6. Riproduci dimostrazioni salvate")
-        print("  7. Migliora un modello con GAIL")
-        print("  0. Esci")
+        print("\nOptions:")
+        print("  1. Collect demonstrations (play manually)")
+        print("  2. Load expert dataset from Minari")
+        print("  3. Train model with Behavioral Cloning (choose architecture)")
+        print("  4. Test learned policy")
+        print("  5. Analyze saved demonstrations")
+        print("  6. Replay saved demonstrations")
+        print("  7. Improve a model with GAIL")
+        print("  0. Exit")
 
-        choice = input("\nScelta: ").strip()
+        choice = input("\nChoice: ").strip()
 
         if choice == "1":
             print("\n" + "=" * 60)
-            print("RACCOLTA DIMOSTRAZIONI")
+            print("COLLECT DEMONSTRATIONS")
             print("=" * 60)
             from demonstrations.collect_demonstrations import main as collect_main
 
@@ -237,7 +252,7 @@ def main():
 
         elif choice == "2":
             print("\n" + "=" * 60)
-            print("CARICAMENTO DATASET MINARI")
+            print("LOAD MINARI DATASET")
             print("=" * 60)
             from demonstrations.load_minari_dataset import main as minari_main
 
@@ -245,13 +260,13 @@ def main():
 
         elif choice == "3":
             if not has_demos:
-                print("\n⚠ Attenzione: Non ci sono dimostrazioni disponibili!")
-                print("Esegui prima l'opzione 1 o 2 per raccogliere/caricare dati.")
-                input("\nPremi ENTER per continuare...")
+                print("\n⚠ Warning: No demonstrations available!")
+                print("Run option 1 or 2 first to collect/load data.")
+                input("\nPress ENTER to continue...")
                 continue
 
             print("\n" + "=" * 60)
-            print("TRAINING BEHAVIORAL CLONING")
+            print("BEHAVIORAL CLONING TRAINING")
             print("=" * 60)
             from behavioral_cloning import main as train_main, prompt_model_type
 
@@ -260,13 +275,13 @@ def main():
 
         elif choice == "4":
             if not has_models:
-                print("\n⚠ Attenzione: Non ci sono modelli addestrati!")
-                print("Esegui prima l'opzione 3 per addestrare un modello.")
-                input("\nPremi ENTER per continuare...")
+                print("\n⚠ Warning: No trained models available!")
+                print("Run option 3 first to train a model.")
+                input("\nPress ENTER to continue...")
                 continue
 
             print("\n" + "=" * 60)
-            print("VALUTAZIONE POLICY")
+            print("POLICY EVALUATION")
             print("=" * 60)
             from test_model import main as test_main
 
@@ -274,15 +289,15 @@ def main():
 
         elif choice == "5":
             print("\n" + "=" * 60)
-            print("ANALISI DIMOSTRAZIONI")
+            print("DEMONSTRATIONS ANALYSIS")
             print("=" * 60)
             from demonstrations.analyze_demonstrations import main as analyze_main
 
             analyze_main()
-        
+
         elif choice == "6":
             print("\n" + "=" * 60)
-            print("RIPRODUZIONE DIMOSTRAZIONI")
+            print("REPLAY DEMONSTRATIONS")
             print("=" * 60)
             from demonstrations.replay_demonstrations import main as replay_main
 
@@ -290,22 +305,31 @@ def main():
 
         elif choice == "7":
             if not has_models:
-                print("\n⚠ Nessun modello addestrato disponibile. Esegui prima il training BC (opzione 3).")
-                input("\nPremi ENTER per continuare...")
+                print(
+                    "\n⚠ No trained model available. Run BC training first (option 3)."
+                )
+                input("\nPress ENTER to continue...")
                 continue
             if not has_demos:
-                print("\n⚠ Servono dimostrazioni per GAIL. Raccoglile o importale con le opzioni 1 o 2.")
-                input("\nPremi ENTER per continuare...")
+                print(
+                    "\n⚠ Demonstrations required for GAIL. Collect or import them with options 1 or 2."
+                )
+                input("\nPress ENTER to continue...")
                 continue
+            
+            print("\n" + "=" * 60)
+            print("GAIL TRAINING")
+            print("=" * 60)
+
             improve_model_with_gail(demo_files, model_files)
 
         elif choice == "0":
-            print("\nArrivederci!")
+            print("\nGoodbye!")
             sys.exit(0)
 
         else:
-            print("\n⚠ Scelta non valida! Riprova.")
-            input("\nPremi ENTER per continuare...")
+            print("\n⚠ Invalid choice! Try again.")
+            input("\nPress ENTER to continue...")
 
 
 if __name__ == "__main__":
