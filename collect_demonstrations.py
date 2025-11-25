@@ -19,12 +19,13 @@ warnings.filterwarnings(
 import pygame
 from env_make import make_space_invaders_env
 from data_manager import DataManager
+from analyze_demonstrations import analyze_demonstrations_file, ACTION_NAMES
 
 
 class DemonstrationCollector:
     """Raccoglie dimostrazioni umane per Behavioral Cloning."""
 
-    def __init__(self, env):
+    def __init__(self, env, fps=30, frame_skip=2):
         self.env = env
         self.demonstrations = []
         self.current_episode = {
@@ -33,6 +34,11 @@ class DemonstrationCollector:
             "rewards": [],
             "dones": [],
         }
+        
+        # Clock per controllare il frame rate
+        self.clock = pygame.time.Clock()
+        self.fps = fps
+        self.frame_skip = frame_skip  # Quanti frame eseguire per ogni azione registrata
 
         # Mappatura tasti -> azioni Space Invaders
         # Azioni: 0=NOOP, 1=FIRE, 2=RIGHT, 3=LEFT, 4=RIGHTFIRE, 5=LEFTFIRE
@@ -94,40 +100,62 @@ class DemonstrationCollector:
                         print("Partita abbandonata (non salvata)")
                         return True, total_reward
 
-            # Ottieni azione umana (legge i tasti ad ogni frame)
+            # Ottieni azione umana
             action = self.get_human_action()
 
-            # Salva osservazione e azione (salva TUTTI i frame)
-            self.current_episode["observations"].append(np.copy(observation))
+            # Salva osservazione e azione (copia necessaria perché gym riusa il buffer)
+            self.current_episode["observations"].append(observation.copy())
             self.current_episode["actions"].append(action)
 
-            # Esegui azione
-            observation, reward, done, truncated, info = self.env.step(action)
+            # Esegui l'azione per frame_skip frame e accumula reward
+            frame_reward = 0
+            for _ in range(self.frame_skip):
+                observation, reward, done, truncated, info = self.env.step(action)
+                frame_reward += reward
+                total_reward += reward
+                
+                if done or truncated:
+                    break
+                
+                #self.clock.tick(self.fps)
 
-            # Salva reward e done
-            self.current_episode["rewards"].append(reward)
+
+            # Salva reward accumulato e done
+            self.current_episode["rewards"].append(frame_reward)
             self.current_episode["dones"].append(done or truncated)
+            
+            # Limita il frame rate (una volta per azione, non per ogni frame skippato)
+            self.clock.tick(self.fps)
 
-            total_reward += reward
-
-        # Converti liste in array numpy per efficienza
-        self.current_episode["observations"] = np.array(
-            self.current_episode["observations"], dtype=np.uint8
-        )
-        self.current_episode["actions"] = np.array(
-            self.current_episode["actions"], dtype=np.int8
-        )
-        self.current_episode["rewards"] = np.array(
-            self.current_episode["rewards"], dtype=np.float32
-        )
-        self.current_episode["dones"] = np.array(
-            self.current_episode["dones"], dtype=np.bool_
-        )
+        # Converti liste in array numpy per efficienza (una sola volta alla fine)
+        episode_data = {
+            "observations": np.array(
+                self.current_episode["observations"], dtype=np.uint8
+            ),
+            "actions": np.array(
+                self.current_episode["actions"], dtype=np.int8
+            ),
+            "rewards": np.array(
+                self.current_episode["rewards"], dtype=np.float32
+            ),
+            "dones": np.array(
+                self.current_episode["dones"], dtype=np.bool_
+            ),
+        }
 
         # Salva l'episodio completato
-        self.demonstrations.append(self.current_episode.copy())
+        self.demonstrations.append(episode_data)
+        
+        # Libera la memoria delle liste temporanee
+        self.current_episode = {
+            "observations": [],
+            "actions": [],
+            "rewards": [],
+            "dones": [],
+        }
+        
         print(f"\nPartita completata! Reward totale: {total_reward}")
-        print(f"Passi registrati: {len(self.current_episode['actions'])}")
+        print(f"Passi registrati: {len(episode_data['actions'])}")
 
         return True, total_reward
 
@@ -183,10 +211,12 @@ class DemonstrationCollector:
 def main():
     """Funzione principale per raccogliere dimostrazioni."""
     # Richiedi numero di partite PRIMA di inizializzare pygame
-    try:
+    """try:
         num_episodes = int(input("Quante partite vuoi giocare? [default: 5]: ") or "5")
     except ValueError:
-        num_episodes = 5
+        num_episodes = 5"""
+    
+    num_episodes = 1
 
     print(f"\nInizializzazione ambiente...")
 
@@ -202,15 +232,54 @@ def main():
     # Raccogli dimostrazioni
     demonstrations = collector.collect_multiple_episodes(num_episodes)
 
-    # Salva se ci sono dimostrazioni
-    if demonstrations:
-        collector.save_demonstrations()
-
-    # Chiudi ambiente
+    # Chiudi ambiente e pygame PRIMA dell'analisi
     env.close()
     pygame.quit()
 
+    # Se ci sono dimostrazioni, analizzale e chiedi conferma
+    if demonstrations:
+        print("\n" + "="*60)
+        print("ANALISI DELLE DIMOSTRAZIONI RACCOLTE")
+        print("="*60)
+        
+        # Crea temporaneamente un file per l'analisi
+        data_manager = DataManager()
+        temp_path, _ = data_manager.save_demonstrations(
+            demonstrations=demonstrations,
+            filename="temp_analysis.pkl",
+            source="manual"
+        )
+        
+        # Analizza
+        try:
+            analyze_demonstrations_file(
+                temp_path,
+                summary_only=False,
+                data_manager=data_manager
+            )
+        finally:
+            # Rimuovi il file temporaneo
+            if temp_path.exists():
+                temp_path.unlink()
+        
+        # Chiedi conferma per salvare
+        print("\n" + "="*60)
+        while True:
+            choice = input("\nVuoi salvare queste dimostrazioni? (s/n): ").strip().lower()
+            if choice in ['s', 'si', 'sì', 'y', 'yes']:
+                saved_path, info = collector.save_demonstrations()
+                print(f"\n✓ Dimostrazioni salvate in: {saved_path}")
+                break
+            elif choice in ['n', 'no']:
+                print("\n✗ Dimostrazioni scartate (non salvate)")
+                break
+            else:
+                print("Per favore, rispondi 's' per sì o 'n' per no")
+    else:
+        print("\nNessuna dimostrazione da salvare.")
+
     print("\nRaccolta completata!")
+
 
 
 if __name__ == "__main__":
