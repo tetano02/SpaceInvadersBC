@@ -131,6 +131,55 @@ class DataManager:
                 ])
         return filepath
 
+    def save_gail_metrics_csv(self, run_timestamp, run_id, metadata, iteration_metrics, target_path=None):
+        """Salva CSV con metadati e metriche per-iterazione del training GAIL."""
+        filepath = Path(target_path) if target_path else self.get_metrics_filepath(run_timestamp, run_id)
+        self._ensure_metrics_header(filepath)
+        with open(filepath, 'a', newline='', encoding='utf-8') as csv_file:
+            writer = csv.writer(csv_file)
+            for key, value in metadata.items():
+                writer.writerow(["gail_metadata", key, value, "", "", "", ""])
+            writer.writerow([])
+            writer.writerow([
+                "section_header",
+                "gail_metrics",
+                "Iteration",
+                "DiscLoss",
+                "ExpertAcc",
+                "AgentAcc",
+                "PolicyLoss"
+            ])
+            for metrics in iteration_metrics:
+                writer.writerow([
+                    "gail_iteration",
+                    metrics.get('iteration'),
+                    round(metrics.get('disc_loss', 0.0), 6),
+                    round(metrics.get('expert_acc', 0.0), 6),
+                    round(metrics.get('agent_acc', 0.0), 6),
+                    round(metrics.get('policy_loss', 0.0), 6),
+                    ""
+                ])
+                writer.writerow([
+                    "gail_iteration_details",
+                    metrics.get('iteration'),
+                    metrics.get('policy_mode'),
+                    metrics.get('steps'),
+                    metrics.get('epsilon'),
+                    metrics.get('disc_updates'),
+                    metrics.get('policy_updates')
+                ])
+                writer.writerow([
+                    "gail_iteration_return",
+                    metrics.get('iteration'),
+                    round(metrics.get('mean_return', 0.0), 6),
+                    metrics.get('gail_reward_mean'),
+                    "",
+                    "",
+                    ""
+                ])
+            writer.writerow([])
+        return filepath
+
     def append_evaluation_results(self, csv_path, evaluation_summary, episode_metrics, metadata=None):
         """Aggiunge i risultati della valutazione al CSV esistente."""
         csv_path = Path(csv_path)
@@ -338,7 +387,8 @@ class DataManager:
     
     def save_training_plot(self, train_losses, val_losses, 
                           train_accuracies, val_accuracies,
-                          filename=None, model_timestamp=None, model_id=None):
+                          filename=None, model_timestamp=None, model_id=None,
+                          metadata=None):
         """
         Salva un plot della storia del training.
         
@@ -375,7 +425,10 @@ class DataManager:
         ax2.legend()
         ax2.grid(True)
         
-        plt.tight_layout()
+        # Titolo descrittivo con modello, dataset, epochs e batch
+        title = self._build_plot_title(metadata, len(train_losses))
+        fig.suptitle(title, fontsize=12)
+        fig.tight_layout(rect=[0, 0, 1, 0.94])
         
         # Nome file: plot_YYMMDD_hhmmss_id.png (id alfanumerico, sincronizzato con modello)
         if filename is None:
@@ -406,6 +459,49 @@ class DataManager:
         plt.show()
         
         return filepath
+
+    def _build_plot_title(self, metadata, observed_epochs):
+        """Costruisce il titolo del plot con dettagli della run."""
+        metadata = metadata or {}
+
+        model_name = metadata.get('model_label') or metadata.get('model_type') or 'Unknown model'
+        dataset_label = metadata.get('training_dataset_name')
+
+        if not dataset_label:
+            demo_files = metadata.get('demonstration_files')
+            if isinstance(demo_files, (list, tuple)) and demo_files:
+                first = Path(demo_files[0]).name
+                if len(demo_files) > 1:
+                    dataset_label = f"{first} (+{len(demo_files) - 1})"
+                else:
+                    dataset_label = first
+
+        if not dataset_label:
+            dataset_label = metadata.get('environment_name')
+        if not dataset_label:
+            dataset_label = 'Unknown dataset'
+
+        epoch_count = metadata.get('num_epochs') or observed_epochs or 'N/A'
+        batch_size = metadata.get('batch_size') or metadata.get('train_batch_size') or 'N/A'
+        frame_mode = metadata.get('frame_mode')
+        if frame_mode == 'stacked':
+            frame_label = 'Input: 2 frames'
+        elif frame_mode == 'single':
+            frame_label = 'Input: 1 frame'
+        elif frame_mode:
+            frame_label = f"Input: {frame_mode}"
+        else:
+            frame_label = None
+
+        parts = []
+        parts.append(f"Model: {model_name}")
+        parts.append(f"Dataset: {dataset_label}")
+        parts.append(f"Epochs: {epoch_count}")
+        parts.append(f"Batch: {batch_size}")
+        if frame_label:
+            parts.append(frame_label)
+
+        return " | ".join(parts)
     
     def get_latest_demonstrations(self):
         """

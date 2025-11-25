@@ -10,38 +10,55 @@ from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict
+import math
 from data_manager import DataManager
 
 
 class BCDataset(Dataset):
     """Dataset per Behavioral Cloning."""
 
-    def __init__(self, demonstrations):
-        """
+    def __init__(self, demonstrations, frame_mode: str = "single"):
+        """Inizializza il dataset.
+
         Args:
-            demonstrations: Lista di episodi con observations e actions
+            demonstrations: lista di episodi con observations e actions
+            frame_mode: "single" per usare un solo frame, "stacked" per concatenare
+                frame precedente e corrente lungo il canale
         """
-        self.observations = []
-        self.actions = []
+        self.frame_mode = (frame_mode or "single").lower()
+        if self.frame_mode not in {"single", "stacked"}:
+            raise ValueError("frame_mode deve essere 'single' o 'stacked'")
 
-        # Estrai tutte le coppie (observation, action) da tutti gli episodi
+        self.samples = []
+
+        # Estrai tutte le tuple (prev_obs, obs, action) mantenendo la sequenza temporale
         for episode in demonstrations:
+            prev_obs = None
             for obs, action in zip(episode["observations"], episode["actions"]):
-                self.observations.append(obs)
-                self.actions.append(action)
+                if prev_obs is None:
+                    prev_obs = obs
+                self.samples.append({
+                    "current": obs,
+                    "previous": prev_obs,
+                    "action": action,
+                })
+                prev_obs = obs
 
-        print(f"Dataset creato con {len(self.observations)} campioni")
+        print(f"Dataset creato con {len(self.samples)} campioni (frame_mode={self.frame_mode})")
 
     def __len__(self):
-        return len(self.observations)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        obs = self.observations[idx]
-        action = self.actions[idx]
+        sample = self.samples[idx]
+        current = torch.FloatTensor(sample["current"]).permute(2, 0, 1) / 255.0
+        action = torch.LongTensor([sample["action"]])
 
-        # Normalizza osservazioni (immagini 0-255 -> 0-1)
-        obs = torch.FloatTensor(obs).permute(2, 0, 1) / 255.0
-        action = torch.LongTensor([action])
+        if self.frame_mode == "stacked":
+            previous = torch.FloatTensor(sample["previous"]).permute(2, 0, 1) / 255.0
+            obs = torch.cat([previous, current], dim=0)
+        else:
+            obs = current
 
         return obs, action
 
@@ -49,11 +66,11 @@ class BCDataset(Dataset):
 class BCPolicy(nn.Module):
     """Rete neurale stile DQN (CNN + MLP) per Behavioral Cloning."""
 
-    def __init__(self, num_actions=6):
+    def __init__(self, num_actions=6, in_channels=3):
         super(BCPolicy, self).__init__()
 
         self.cnn = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=8, stride=4),
+            nn.Conv2d(in_channels, 32, kernel_size=8, stride=4),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.ReLU(),
@@ -80,9 +97,9 @@ class BCPolicy(nn.Module):
 class BCMLPPolicy(nn.Module):
     """Multi-layer perceptron che lavora sull'immagine flattenata."""
 
-    def __init__(self, num_actions=6):
+    def __init__(self, num_actions=6, in_channels=3):
         super().__init__()
-        input_dim = 3 * 210 * 160
+        input_dim = in_channels * 210 * 160
         self.network = nn.Sequential(
             nn.Flatten(),
             nn.Linear(input_dim, 2048),
@@ -97,16 +114,92 @@ class BCMLPPolicy(nn.Module):
         return self.network(x)
 
 
+class BCVisionTransformer(nn.Module):
+    """Vision Transformer compatto per osservazioni Atari."""
+
+    def __init__(
+        self,
+        num_actions=6,
+        in_channels=3,
+        image_size=(210, 160),
+        patch_size=(14, 16),
+        embed_dim=256,
+        depth=6,
+        num_heads=8,
+        mlp_ratio=4.0,
+        dropout=0.1,
+    ):
+        super().__init__()
+        self.image_size = image_size
+        self.patch_size = patch_size
+
+        if image_size[0] % patch_size[0] != 0 or image_size[1] % patch_size[1] != 0:
+            raise ValueError("patch_size deve dividere esattamente image_size per altezza e larghezza")
+
+        self.patch_embed = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=embed_dim,
+            kernel_size=patch_size,
+            stride=patch_size,
+        )
+        num_patches = (image_size[0] // patch_size[0]) * (image_size[1] // patch_size[1])
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+        self.pos_drop = nn.Dropout(dropout)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=num_heads,
+            dim_feedforward=int(embed_dim * mlp_ratio),
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=depth)
+        self.norm = nn.LayerNorm(embed_dim)
+        self.head = nn.Linear(embed_dim, num_actions)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        nn.init.trunc_normal_(self.head.weight, std=0.02)
+        if self.head.bias is not None:
+            nn.init.zeros_(self.head.bias)
+
+    def forward(self, x):
+        x = self.patch_embed(x)  # (B, embed_dim, H', W')
+        x = x.flatten(2).transpose(1, 2)  # (B, num_patches, embed_dim)
+
+        batch_size = x.size(0)
+        cls_tokens = self.cls_token.expand(batch_size, -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+        x = x + self.pos_embed
+        x = self.pos_drop(x)
+
+        x = self.transformer(x)
+        x = self.norm(x[:, 0])
+        return self.head(x)
+
+
 MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
     "dqn": {
         "label": "DQN CNN",
         "description": "CNN con tre conv e testa fully-connected (default)",
-        "builder": lambda num_actions: BCPolicy(num_actions=num_actions),
+        "builder": lambda num_actions, **kwargs: BCPolicy(num_actions=num_actions, **kwargs),
     },
     "mlp": {
         "label": "Multi-Layer Perceptron",
         "description": "Rete fully-connected su osservazione flattenata",
-        "builder": lambda num_actions: BCMLPPolicy(num_actions=num_actions),
+        "builder": lambda num_actions, **kwargs: BCMLPPolicy(num_actions=num_actions, **kwargs),
+    },
+    "vit": {
+        "label": "Vision Transformer",
+        "description": "Transformer compatto con patch embedding (più esigente in VRAM)",
+        "builder": lambda num_actions, **kwargs: BCVisionTransformer(num_actions=num_actions, **kwargs),
     },
 }
 
@@ -118,14 +211,14 @@ def get_available_model_types():
     return MODEL_REGISTRY
 
 
-def build_policy(model_type: str, num_actions: int = 6):
-    """Istanzia il modello richiesto."""
+def build_policy(model_type: str, num_actions: int = 6, **model_kwargs):
+    """Istanzia il modello richiesto, propagando eventuali kwargs."""
     key = (model_type or DEFAULT_MODEL_TYPE).lower()
     spec = MODEL_REGISTRY.get(key)
     if spec is None:
         valid = ", ".join(MODEL_REGISTRY.keys())
         raise ValueError(f"Model '{model_type}' non supportato. Opzioni: {valid}")
-    return spec["builder"](num_actions=num_actions)
+    return spec["builder"](num_actions=num_actions, **model_kwargs)
 
 
 def prompt_model_type(default: str = DEFAULT_MODEL_TYPE):
@@ -145,6 +238,25 @@ def prompt_model_type(default: str = DEFAULT_MODEL_TYPE):
             idx = int(choice) - 1
             if 0 <= idx < len(options):
                 return options[idx][0]
+        print("Input non valido. Riprova.")
+
+
+def prompt_frame_mode(default: str = "single"):
+    """Chiede se usare un solo frame o due frame concatenati."""
+    choices = [("single", "Frame singolo (3 canali)"), ("stacked", "Due frame consecutivi (6 canali)")]
+    print("\n=== SELEZIONE TIPO DI INPUT ===")
+    for idx, (key, label) in enumerate(choices, start=1):
+        default_tag = " (default)" if key == default else ""
+        print(f"{idx}. {label}{default_tag}")
+
+    while True:
+        choice = input("Input desiderato: ").strip()
+        if not choice:
+            return default
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(choices):
+                return choices[idx][0]
         print("Input non valido. Riprova.")
 
 
@@ -182,6 +294,9 @@ class BCTrainer:
             self.run_timestamp, self.run_id
         )
         self.run_metadata = {"model_type": self.model_type}
+        self.run_metadata["model_label"] = MODEL_REGISTRY.get(self.model_type, {}).get(
+            "label", self.model_type
+        )
         self.run_start_time = None
         self.run_end_time = None
 
@@ -193,6 +308,9 @@ class BCTrainer:
             metadata = {}
         self.run_metadata.update(metadata)
         self.run_metadata.setdefault("model_type", self.model_type)
+        self.run_metadata.setdefault(
+            "model_label", MODEL_REGISTRY.get(self.model_type, {}).get("label", self.model_type)
+        )
 
     def train_epoch(self, train_loader):
         """Addestra per una epoch."""
@@ -200,8 +318,10 @@ class BCTrainer:
         total_loss = 0
         correct = 0
         total = 0
+        total_batches = len(train_loader)
+        progress_interval = max(1, math.ceil(total_batches * 0.05)) if total_batches else 1
 
-        for observations, actions in train_loader:
+        for batch_idx, (observations, actions) in enumerate(train_loader):
             observations = observations.to(self.device)
             actions = actions.squeeze(-1).to(self.device)
 
@@ -219,6 +339,14 @@ class BCTrainer:
             _, predicted = torch.max(predictions.data, 1)
             total += actions.size(0)
             correct += (predicted == actions).sum().item()
+
+            if (batch_idx + 1) % progress_interval == 0 or (batch_idx + 1) == total_batches:
+                avg_loss_so_far = total_loss / (batch_idx + 1)
+                model_tag = self.model_type.upper()
+                print(
+                    f"[{model_tag}][Batch {batch_idx + 1}/{total_batches}] "
+                    f"Loss: {loss.item():.4f} | Avg: {avg_loss_so_far:.4f}"
+                )
 
         avg_loss = total_loss / len(train_loader)
         accuracy = 100 * correct / total
@@ -287,6 +415,9 @@ class BCTrainer:
         print(f"Miglior validation loss: {best_val_loss:.4f}")
         print(f"{'='*50}\n")
         self.run_end_time = datetime.now()
+        # Salva il modello finale con lo stesso timestamp/id della run
+        self.save_model()
+
         self._export_training_metrics(num_epochs)
 
         # Plot risultati (usa timestamp e id dell'ultimo salvataggio)
@@ -355,6 +486,7 @@ class BCTrainer:
             val_accuracies=self.val_accuracies,
             model_timestamp=self.last_save_timestamp,
             model_id=self.last_save_id,
+            metadata=self.run_metadata,
         )
 
     def save_model(self, filename=None):
@@ -416,14 +548,27 @@ def train_bc_model(
     batch_size=32,
     val_split=0.2,
     model_type=DEFAULT_MODEL_TYPE,
+    frame_mode: str = "single",
 ):
-    """Funzione principale per addestrare il modello BC."""
-    # Carica dimostrazioni
-    print(f"Caricamento dimostrazioni da: {demonstrations_file}")
-    demonstrations = load_demonstrations(demonstrations_file)
+    """Funzione principale per addestrare il modello BC.
+
+    Args:
+        demonstrations_files: lista di percorsi ai file di dimostrazioni
+        num_epochs: numero di epoche di training
+        batch_size: dimensione batch per i DataLoader
+        val_split: frazione dedicata alla validation
+        device: dispositivo su cui addestrare
+        model_type: chiave nel MODEL_REGISTRY
+        frame_mode: "single" (3 canali) oppure "stacked" (due frame concatenati)
+    """
+    print("Caricamento dimostrazioni da:")
+    demonstrations = []
+    for demo_file in demonstrations_files:
+        print(f"  - {demo_file}")
+        demonstrations.extend(load_demonstrations(demo_file))
 
     # Crea dataset
-    full_dataset = BCDataset(demonstrations)
+    full_dataset = BCDataset(demonstrations, frame_mode=frame_mode)
 
     # Split train/validation
     val_size = int(len(full_dataset) * val_split)
@@ -439,15 +584,25 @@ def train_bc_model(
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     # Crea modello e trainer
-    policy = build_policy(model_type=model_type, num_actions=6)
-    trainer = BCTrainer(policy, model_type=model_type)
+    input_channels = 6 if frame_mode == "stacked" else 3
+    policy = build_policy(model_type=model_type, num_actions=6, in_channels=input_channels)
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    trainer = BCTrainer(policy, model_type=model_type, device=device)
     environment_name = "ALE/SpaceInvaders-v5"
+    demo_file_paths = [str(Path(path)) for path in demonstrations_files]
+    dataset_label = Path(demonstrations_files[0]).name if demonstrations_files else "Unknown"
+    if len(demonstrations_files) > 1:
+        dataset_label = f"{dataset_label} (+{len(demonstrations_files) - 1})"
+
     trainer.configure_run(
         {
             "environment_name": environment_name,
             "training_type": "behavioral_cloning",
             "model_type": model_type,
-            "demonstration_files": [str(Path(demonstrations_file))],
+            "frame_mode": frame_mode,
+            "demonstration_files": demo_file_paths,
+            "training_dataset_name": dataset_label,
             "num_demonstrations": len(demonstrations),
             "num_epochs": num_epochs,
             "batch_size": batch_size,
@@ -458,11 +613,8 @@ def train_bc_model(
         }
     )
 
-    # Addestra
+    # Addestra (il trainer salverà il modello finale automaticamente)
     trainer.train(train_loader, val_loader, num_epochs=num_epochs)
-
-    # Salva modello finale (senza filename, userà il nuovo formato automatico)
-    trainer.save_model()
 
     return trainer.policy
 
@@ -487,6 +639,7 @@ def main(selected_model_type=None):
     print(f"Usando dimostrazioni da: {latest_demo_file}\n")
 
     model_type = selected_model_type or prompt_model_type()
+    frame_mode = prompt_frame_mode()
 
     # Parametri training
     num_epochs = int(input("Numero di epochs [default: 50]: ") or "50")
@@ -498,6 +651,7 @@ def main(selected_model_type=None):
         num_epochs=num_epochs,
         batch_size=batch_size,
         model_type=model_type,
+        frame_mode=frame_mode,
     )
 
     print("\nTraining completato! Usa 'evaluate_bc.py' per testare il modello.")
