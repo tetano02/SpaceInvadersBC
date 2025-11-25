@@ -316,7 +316,7 @@ def main():
     # Menu
     while True:
         print("\n=== VALUTAZIONE BC AGENT ===")
-        print("1. Valuta agente (10 episodi)")
+        print("1. Valuta agente (30 episodi)")
         print("2. Gioca episodio singolo (interattivo)")
         print("3. Valutazione estesa (custom numero episodi)")
         print("0. Esci")
@@ -325,7 +325,7 @@ def main():
         
         if choice == '1':
             render_mode = prompt_render_choice()
-            evaluate_agent(agent, num_episodes=10, render_mode=render_mode)
+            evaluate_agent(agent, num_episodes=30, render_mode=render_mode)
         elif choice == '2':
             play_interactively(agent)
         elif choice == '3':

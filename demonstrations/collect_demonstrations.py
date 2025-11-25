@@ -19,7 +19,7 @@ warnings.filterwarnings(
 import pygame
 from env_make import make_space_invaders_env
 from data_manager import DataManager
-from analyze_demonstrations import analyze_demonstrations_file, ACTION_NAMES
+from demonstrations.analyze_demonstrations import analyze_demonstrations_file, ACTION_NAMES
 
 
 class DemonstrationCollector:

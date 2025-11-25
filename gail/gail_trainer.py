@@ -62,7 +62,7 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 
 from data_manager import DataManager
-from discriminator import Discriminator
+from gail.gail_discriminator import Discriminator
 
 # -----------------------------------------------------------------------------
 # Data containers

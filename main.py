@@ -99,10 +99,10 @@ def improve_model_with_gail(demo_files, model_files):
         select_demonstration_files,
         select_device,
     )
-    from discriminator import Discriminator
+    from gail.gail_discriminator import Discriminator
     from env_make import make_space_invaders_env
-    from evaluate_bc import BCAgent
-    from gail_trainer import GAILTrainer, FrameStackPreprocessor
+    from test_model import BCAgent
+    from gail.gail_trainer import GAILTrainer, FrameStackPreprocessor
 
     data_manager = DataManager()
     model_path = choose_model_file(model_files)
@@ -231,7 +231,7 @@ def main():
             print("\n" + "=" * 60)
             print("RACCOLTA DIMOSTRAZIONI")
             print("=" * 60)
-            from collect_demonstrations import main as collect_main
+            from demonstrations.collect_demonstrations import main as collect_main
 
             collect_main()
 
@@ -239,7 +239,7 @@ def main():
             print("\n" + "=" * 60)
             print("CARICAMENTO DATASET MINARI")
             print("=" * 60)
-            from load_minari_dataset import main as minari_main
+            from demonstrations.load_minari_dataset import main as minari_main
 
             minari_main()
 
@@ -268,15 +268,15 @@ def main():
             print("\n" + "=" * 60)
             print("VALUTAZIONE POLICY")
             print("=" * 60)
-            from evaluate_bc import main as eval_main
+            from test_model import main as test_main
 
-            eval_main()
+            test_main()
 
         elif choice == "5":
             print("\n" + "=" * 60)
             print("ANALISI DIMOSTRAZIONI")
             print("=" * 60)
-            from analyze_demonstrations import main as analyze_main
+            from demonstrations.analyze_demonstrations import main as analyze_main
 
             analyze_main()
         
@@ -284,9 +284,9 @@ def main():
             print("\n" + "=" * 60)
             print("RIPRODUZIONE DIMOSTRAZIONI")
             print("=" * 60)
-            from replay_demonstrations import main as reply_main
+            from demonstrations.replay_demonstrations import main as replay_main
 
-            reply_main()
+            replay_main()
 
         elif choice == "7":
             if not has_models:
