@@ -57,154 +57,6 @@ def prompt_float_input(message: str, default: float) -> float:
         print(f"Input non valido. Uso il valore di default ({default}).")
         return default
 
-
-def choose_model_file(model_files):
-    """Permette all'utente di scegliere un modello salvato."""
-    if not model_files:
-        print("\nNessun modello disponibile.")
-        return None
-
-    sorted_models = sorted(model_files, key=lambda p: p.stat().st_mtime, reverse=True)
-    print("\n=== MODELLI DISPONIBILI PER GAIL ===")
-    for idx, model_path in enumerate(sorted_models, start=1):
-        timestamp = datetime.fromtimestamp(model_path.stat().st_mtime)
-        ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"  {idx}. {model_path.name} (ultimo update: {ts_str})")
-    print("Inserisci il numero del modello o 'q' per annullare. [ENTER = 1]")
-
-    while True:
-        choice = input("Modello: ").strip()
-        if choice.lower() in {"q", "quit", "exit"}:
-            return None
-        if not choice:
-            return sorted_models[0]
-        if choice.isdigit():
-            idx = int(choice)
-            if 1 <= idx <= len(sorted_models):
-                return sorted_models[idx - 1]
-        print("Input non valido, riprova.")
-
-
-def improve_model_with_gail(demo_files, model_files):
-    """Flusso interattivo per migliorare una policy tramite GAIL."""
-
-    if not demo_files:
-        print("\n⚠ Sono necessarie dimostrazioni per eseguire GAIL.")
-        return
-
-    from data_manager import DataManager
-    from behavioral_cloning import (
-        build_policy,
-        DEFAULT_MODEL_TYPE,
-        select_demonstration_files,
-        select_device,
-    )
-    from gail.gail_discriminator import Discriminator
-    from env_make import make_space_invaders_env
-    from test_model import BCAgent
-    from gail.gail_trainer import GAILTrainer, FrameStackPreprocessor
-
-    data_manager = DataManager()
-    model_path = choose_model_file(model_files)
-    if model_path is None:
-        print("\nOperazione annullata: nessun modello selezionato.")
-        return
-
-    checkpoint = data_manager.load_model(model_path, device="cpu")
-    run_metadata = checkpoint.get("run_metadata") or {}
-    model_type = run_metadata.get("model_type", DEFAULT_MODEL_TYPE)
-    frame_mode = BCAgent._determine_frame_mode(run_metadata, checkpoint) or "single"
-    frame_mode = frame_mode.lower()
-    stack_size = 2 if frame_mode == "stacked" else 1
-
-    print(f"\nModello selezionato: {model_path.name}")
-    print(f"Tipo architettura: {model_type} | Input: {frame_mode}")
-
-    selected_demo_files = select_demonstration_files(demo_files)
-    if not selected_demo_files:
-        print("\nOperazione annullata: nessuna dimostrazione selezionata.")
-        return
-
-    preview_data = data_manager.load_demonstrations(selected_demo_files[0])
-    first_episode = preview_data[0]
-    first_obs = first_episode["observations"][0]
-    if first_obs.ndim == 3:
-        base_channels = first_obs.shape[2]
-        height, width = first_obs.shape[0], first_obs.shape[1]
-        input_channels = base_channels * stack_size
-        observation_shape = (input_channels, height, width)
-    else:
-        base_dim = first_obs.shape[0]
-        input_channels = base_dim * stack_size
-        observation_shape = (input_channels,)
-
-    device = select_device()
-    env = make_space_invaders_env(render_mode=None)
-    num_actions = env.action_space.n
-
-    policy = build_policy(
-        model_type=model_type, num_actions=num_actions, in_channels=input_channels
-    )
-    policy_mode = "q_values" if model_type.lower() == "dqn" else "logits"
-    preprocessor = FrameStackPreprocessor(stack_size=stack_size)
-    discriminator = Discriminator(
-        observation_shape=observation_shape, num_actions=num_actions
-    )
-
-    print("\nConfigura training GAIL:")
-    num_iterations = prompt_int_input("Iterazioni GAIL [default: 20]: ", 20)
-    steps_per_collect = prompt_int_input(
-        "Passi raccolti per iterazione [default: 2048]: ", 2048
-    )
-    disc_updates = prompt_int_input(
-        "Aggiornamenti discriminatore per iterazione [default: 5]: ", 5
-    )
-    policy_updates = prompt_int_input(
-        "Aggiornamenti policy per iterazione [default: 1]: ", 1
-    )
-    epsilon = prompt_float_input("Epsilon esplorazione [default: 0.05]: ", 0.05)
-    # Ridotta capacità buffer per ridurre uso memoria
-    buffer_capacity = prompt_int_input(
-        "Capacità agent buffer [default: 50000]: ", 50000
-    )
-
-    trainer = GAILTrainer(
-        policy=policy,
-        discriminator=discriminator,
-        env=env,
-        expert_files=selected_demo_files,
-        bc_checkpoint_path=model_path,
-        policy_output_type=policy_mode,
-        state_preprocessor=preprocessor,
-        agent_buffer_capacity=buffer_capacity,
-        device=device,
-    )
-
-    try:
-        trainer.train(
-            num_iterations=num_iterations,
-            steps_per_collect=steps_per_collect,
-            discriminator_updates=disc_updates,
-            policy_updates=policy_updates,
-            epsilon=epsilon,
-        )
-    finally:
-        env.close()
-
-    print(f"\nMetriche GAIL salvate in: {trainer.metrics_csv_path}")
-
-    save_choice = input("\nSalvare il modello migliorato? [y/N]: ").strip().lower()
-    if save_choice in {"y", "yes"}:
-        model_path_saved, timestamp, model_id = trainer.save_checkpoint()
-        print(f"✓ Modello GAIL salvato in: {model_path_saved}")
-        if timestamp and model_id:
-            print(f"  ID run: {timestamp}_{model_id}")
-    else:
-        print(
-            "Modello non salvato. Puoi sempre rieseguire il training GAIL in seguito."
-        )
-
-
 def main():
     """Main menu."""
 
@@ -316,12 +168,13 @@ def main():
                 )
                 input("\nPress ENTER to continue...")
                 continue
-            
+
             print("\n" + "=" * 60)
             print("GAIL TRAINING")
             print("=" * 60)
+            from gail.gail_trainer import main as gail_main
 
-            improve_model_with_gail(demo_files, model_files)
+            gail_main(demo_files=demo_files, model_files=model_files)
 
         elif choice == "0":
             print("\nGoodbye!")

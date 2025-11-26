@@ -82,23 +82,27 @@ def default_state_preprocessor(observation: np.ndarray | torch.Tensor) -> torch.
             if observation.is_cuda:
                 observation = observation.cpu()
             # Usa detach senza clone per evitare copia
-            arr = observation.detach().numpy() if observation.requires_grad else observation.numpy()
+            arr = (
+                observation.detach().numpy()
+                if observation.requires_grad
+                else observation.numpy()
+            )
         else:
             arr = np.asarray(observation)
-        
+
         # Controlla se serve normalizzazione prima di convertire
         needs_norm = arr.max() > 1.0
-        
+
         # Converti a float32 e normalizza in un solo passaggio
         if needs_norm:
             tensor = torch.from_numpy(arr.astype(np.float32) / 255.0)
         else:
             tensor = torch.from_numpy(arr.astype(np.float32))
-        
+
         # Permuta se necessario
         if tensor.dim() == 3 and tensor.shape[-1] in {1, 3, 4, 6}:
             tensor = tensor.permute(2, 0, 1)
-        
+
         return tensor
     except (RuntimeError, MemoryError) as e:
         if "not enough memory" in str(e) or isinstance(e, MemoryError):
@@ -106,14 +110,20 @@ def default_state_preprocessor(observation: np.ndarray | torch.Tensor) -> torch.
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            raise RuntimeError(f"Out of memory in state preprocessing. Try reducing buffer capacity or batch size. Original error: {e}")
+            raise RuntimeError(
+                f"Out of memory in state preprocessing. Try reducing buffer capacity or batch size. Original error: {e}"
+            )
         raise
 
 
 class FrameStackPreprocessor:
     """Wraps a base preprocessor to provide N-frame stacking."""
 
-    def __init__(self, stack_size: int = 1, base_preprocessor: Callable = default_state_preprocessor) -> None:
+    def __init__(
+        self,
+        stack_size: int = 1,
+        base_preprocessor: Callable = default_state_preprocessor,
+    ) -> None:
         self.stack_size = max(1, int(stack_size))
         self.base_preprocessor = base_preprocessor
         self._buffer: deque[torch.Tensor] = deque(maxlen=self.stack_size)
@@ -127,7 +137,9 @@ class FrameStackPreprocessor:
             return tensor
         if not self._buffer:
             for _ in range(self.stack_size):
-                self._buffer.append(tensor.clone())  # Clone per evitare reference allo stesso tensor
+                self._buffer.append(
+                    tensor.clone()
+                )  # Clone per evitare reference allo stesso tensor
         else:
             self._buffer.append(tensor)
         # Usa stack invece di cat per essere più efficiente
@@ -245,7 +257,9 @@ class GAILTrainer:
         expert_files: Optional[Sequence[str | Path]] = None,
         bc_checkpoint_path: Optional[str | Path] = None,
         policy_output_type: Optional[str] = None,
-        state_preprocessor: Callable[[np.ndarray | torch.Tensor], torch.Tensor] = default_state_preprocessor,
+        state_preprocessor: Callable[
+            [np.ndarray | torch.Tensor], torch.Tensor
+        ] = default_state_preprocessor,
         agent_buffer_capacity: int = 100_000,
         gamma: float = 0.99,
         policy_lr: float = 1e-4,
@@ -254,7 +268,9 @@ class GAILTrainer:
         device: Optional[str] = None,
         max_grad_norm: float = 10.0,
     ) -> None:
-        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.device = torch.device(
+            device or ("cuda" if torch.cuda.is_available() else "cpu")
+        )
         self.policy = policy.to(self.device)
         self.discriminator = discriminator.to(self.device)
         self.env = env
@@ -263,25 +279,35 @@ class GAILTrainer:
         self.batch_size = batch_size
         self.max_grad_norm = max_grad_norm
         self.state_preprocessor = state_preprocessor
-        self.policy_output_type = infer_policy_output_type(self.policy, explicit=policy_output_type)
+        self.policy_output_type = infer_policy_output_type(
+            self.policy, explicit=policy_output_type
+        )
 
         self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=policy_lr)
-        self.discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=discriminator_lr)
+        self.discriminator_optimizer = torch.optim.Adam(
+            self.discriminator.parameters(), lr=discriminator_lr
+        )
         self.discriminator_loss = nn.BCEWithLogitsLoss()
 
         self.agent_buffer = ReplayBuffer(agent_buffer_capacity)
         self.data_manager = DataManager()
         self.run_timestamp, self.run_id = self.data_manager.create_run_identifier()
-        self.metrics_csv_path = self.data_manager.get_metrics_filepath(self.run_timestamp, self.run_id)
+        self.metrics_csv_path = self.data_manager.get_metrics_filepath(
+            self.run_timestamp, self.run_id
+        )
         self.training_start_time: Optional[datetime] = None
         self.training_end_time: Optional[datetime] = None
         self.iteration_history: List[dict] = []
         self.base_model_path = str(bc_checkpoint_path) if bc_checkpoint_path else None
+        self.best_mean_return: float = -float("inf")
+        self.best_model_path: Optional[str] = None
         self.training_metadata = {
             "training_type": "gail",
             "policy_output_type": self.policy_output_type,
             "base_model_path": self.base_model_path,
-            "base_model_name": Path(self.base_model_path).name if self.base_model_path else "N/A",
+            "base_model_name": (
+                Path(self.base_model_path).name if self.base_model_path else "N/A"
+            ),
             "environment_name": env_id,
             "agent_buffer_capacity": agent_buffer_capacity,
             "batch_size": batch_size,
@@ -317,8 +343,13 @@ class GAILTrainer:
 
         while steps_collected < num_steps:
             with torch.no_grad():  # Evita accumulo di gradienti
-                action = select_action(self.policy, state, epsilon=epsilon, output_type=self.policy_output_type)
-            
+                action = select_action(
+                    self.policy,
+                    state,
+                    epsilon=epsilon,
+                    output_type=self.policy_output_type,
+                )
+
             next_obs, reward, terminated, truncated, _ = self.env.step(action)
             done = bool(terminated or truncated)
             next_state = self._prepare_state(next_obs)
@@ -334,10 +365,10 @@ class GAILTrainer:
 
             episode_return += reward
             steps_collected += 1
-            
+
             # Libera memoria dello stato precedente
             del state
-            
+
             # Pulizia periodica della memoria ogni 500 step
             if steps_collected % 500 == 0:
                 gc.collect()
@@ -355,10 +386,10 @@ class GAILTrainer:
 
         if not episode_rewards:
             episode_rewards.append(episode_return)
-        
+
         # Pulisci riferimenti ai tensori
         del state, next_state
-        
+
         return {"steps": steps_collected, "episode_rewards": episode_rewards}
 
     def sample_expert_batch(self, batch_size: Optional[int] = None) -> dict:
@@ -390,10 +421,12 @@ class GAILTrainer:
 
         logits_expert = self.discriminator(expert_states, expert_actions)
         logits_agent = self.discriminator(agent_states, agent_actions)
-        labels = torch.cat([
-            torch.ones_like(logits_expert),
-            torch.zeros_like(logits_agent),
-        ])
+        labels = torch.cat(
+            [
+                torch.ones_like(logits_expert),
+                torch.zeros_like(logits_agent),
+            ]
+        )
         logits = torch.cat([logits_expert, logits_agent])
 
         loss = self.discriminator_loss(logits, labels)
@@ -408,14 +441,16 @@ class GAILTrainer:
         # Libera memoria dei tensori intermedi
         del expert_states, expert_actions, agent_states, agent_actions
         del logits_expert, logits_agent, labels, logits
-        
+
         return {
             "loss": float(loss.item()),
             "expert_acc": expert_acc,
             "agent_acc": agent_acc,
         }
 
-    def compute_gail_rewards(self, states: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+    def compute_gail_rewards(
+        self, states: torch.Tensor, actions: torch.Tensor
+    ) -> torch.Tensor:
         """Returns shaped rewards derived from the discriminator."""
 
         logits = self.discriminator(states.to(self.device), actions.to(self.device))
@@ -432,6 +467,56 @@ class GAILTrainer:
         loss = self._update_policy_policy_gradient(batch, gail_rewards)
         return {"policy_loss": loss, "mode": "policy_gradient"}
 
+    def validate_policy(self, num_episodes: int = 10, epsilon: float = 0.0) -> dict:
+        """Valida la policy corrente su un numero fisso di episodi completi.
+
+        Args:
+            num_episodes: Numero di episodi da completare per la validazione
+            epsilon: Epsilon per esplorazione (default 0.0 = greedy)
+
+        Returns:
+            Dict con mean_return, std_return, episode_rewards
+        """
+        episode_rewards = []
+
+        for _ in range(num_episodes):
+            episode_return = 0.0
+            obs, _ = self.env.reset()
+            self._reset_state_preprocessor()
+            state = self._prepare_state(obs)
+            done = False
+
+            while not done:
+                with torch.no_grad():
+                    action = select_action(
+                        self.policy,
+                        state,
+                        epsilon=epsilon,
+                        output_type=self.policy_output_type,
+                    )
+
+                next_obs, reward, terminated, truncated, _ = self.env.step(action)
+                done = bool(terminated or truncated)
+                episode_return += reward
+
+                if not done:
+                    state = self._prepare_state(next_obs)
+
+            episode_rewards.append(episode_return)
+
+        mean_return = sum(episode_rewards) / len(episode_rewards)
+        # Calcola deviazione standard
+        variance = sum((r - mean_return) ** 2 for r in episode_rewards) / len(
+            episode_rewards
+        )
+        std_return = variance**0.5
+
+        return {
+            "mean_return": mean_return,
+            "std_return": std_return,
+            "episode_rewards": episode_rewards,
+        }
+
     def train(
         self,
         num_iterations: int,
@@ -440,8 +525,15 @@ class GAILTrainer:
         policy_updates: int = 1,
         epsilon: float = 0.05,
         log_interval: int = 1,
+        use_validation: bool = True,
+        validation_episodes: int = 10,
     ) -> None:
-        """Runs the full GAIL training loop."""
+        """Runs the full GAIL training loop.
+
+        Args:
+            use_validation: Se True, valida con più episodi quando trova un potenziale best model
+            validation_episodes: Numero di episodi per validazione approfondita
+        """
 
         self.training_start_time = datetime.now()
         self.iteration_history.clear()
@@ -455,7 +547,9 @@ class GAILTrainer:
 
         try:
             for iteration in range(1, num_iterations + 1):
-                rollout_stats = self.collect_agent_trajectories(steps_per_collect, epsilon=epsilon)
+                rollout_stats = self.collect_agent_trajectories(
+                    steps_per_collect, epsilon=epsilon
+                )
                 disc_losses = []
                 for _ in range(discriminator_updates):
                     expert_batch = self.sample_expert_batch()
@@ -466,39 +560,99 @@ class GAILTrainer:
                     del expert_batch, agent_batch
 
                 agent_batch = self.sample_agent_batch()
-                gail_rewards = self.compute_gail_rewards(agent_batch["states"], agent_batch["actions"])
+                gail_rewards = self.compute_gail_rewards(
+                    agent_batch["states"], agent_batch["actions"]
+                )
                 policy_metrics = None
                 for _ in range(policy_updates):
                     policy_metrics = self.update_policy(agent_batch, gail_rewards)
 
-                avg_disc_loss = sum(m["loss"] for m in disc_losses) / max(len(disc_losses), 1)
-                avg_expert_acc = sum(m["expert_acc"] for m in disc_losses) / max(len(disc_losses), 1)
-                avg_agent_acc = sum(m["agent_acc"] for m in disc_losses) / max(len(disc_losses), 1)
-                
-                mean_reward = sum(rollout_stats["episode_rewards"]) / len(rollout_stats["episode_rewards"])
+                avg_disc_loss = sum(m["loss"] for m in disc_losses) / max(
+                    len(disc_losses), 1
+                )
+                avg_expert_acc = sum(m["expert_acc"] for m in disc_losses) / max(
+                    len(disc_losses), 1
+                )
+                avg_agent_acc = sum(m["agent_acc"] for m in disc_losses) / max(
+                    len(disc_losses), 1
+                )
+
+                mean_reward = sum(rollout_stats["episode_rewards"]) / len(
+                    rollout_stats["episode_rewards"]
+                )
                 self._record_iteration_metrics(
                     iteration=iteration,
                     disc_loss=avg_disc_loss,
                     expert_acc=avg_expert_acc,
                     agent_acc=avg_agent_acc,
-                    policy_loss=policy_metrics["policy_loss"] if policy_metrics else 0.0,
+                    policy_loss=(
+                        policy_metrics["policy_loss"] if policy_metrics else 0.0
+                    ),
                     policy_mode=policy_metrics["mode"] if policy_metrics else "n/a",
                     mean_return=mean_reward,
                     steps=rollout_stats["steps"],
                     epsilon=epsilon,
                     disc_updates=discriminator_updates,
                     policy_updates=policy_updates,
-                    gail_reward_mean=float(gail_rewards.mean().item()) if gail_rewards.numel() > 0 else 0.0,
+                    gail_reward_mean=(
+                        float(gail_rewards.mean().item())
+                        if gail_rewards.numel() > 0
+                        else 0.0
+                    ),
                 )
-                
+
                 # Pulisci memoria DOPO aver registrato le metriche
                 del agent_batch, gail_rewards, disc_losses
-                
+
                 # Pulisci cache CUDA ogni iterazione
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                
+
                 gc.collect()  # Forza garbage collection
+
+                # Se il training mean suggerisce un miglioramento, valida approfonditamente
+                if mean_reward > self.best_mean_return:
+                    if use_validation:
+                        print(
+                            f"\n[Iter {iteration}] Potenziale best model (TrainMean={mean_reward:.1f})"
+                        )
+                        print(
+                            f"[Iter {iteration}] Valido con {validation_episodes} episodi..."
+                        )
+                        val_stats = self.validate_policy(
+                            num_episodes=validation_episodes, epsilon=0.0
+                        )
+                        val_mean = val_stats["mean_return"]
+                        val_std = val_stats["std_return"]
+                        print(
+                            f"[Iter {iteration}] Validation: MeanReturn={val_mean:.1f} (±{val_std:.1f})"
+                        )
+
+                        # Salva SOLO se la validazione conferma il miglioramento
+                        if val_mean > self.best_mean_return:
+                            self.best_mean_return = val_mean
+                            saved_path, _, _ = self.save_checkpoint(
+                                filename="best_model_temp.pth"
+                            )
+                            self.best_model_path = str(saved_path)
+                            print(
+                                f"[Iter {iteration}] ✓ Confermato! New best model: ValMean={val_mean:.1f}"
+                            )
+                        else:
+                            print(
+                                f"[Iter {iteration}] ✗ Non confermato (ValMean={val_mean:.1f} < Best={self.best_mean_return:.1f})"
+                            )
+                    else:
+                        # Senza validazione, usa direttamente il training mean
+                        self.best_mean_return = mean_reward
+                        saved_path, _, _ = self.save_checkpoint(
+                            filename="best_model_temp.pth"
+                        )
+                        self.best_model_path = str(saved_path)
+                        if iteration % log_interval == 0:
+                            print(
+                                f"[Iter {iteration}] New best model! MeanEpReturn={mean_reward:.1f}"
+                            )
 
                 if iteration % log_interval == 0:
                     print(
@@ -510,6 +664,28 @@ class GAILTrainer:
         finally:
             self.training_end_time = datetime.now()
             self._export_iteration_metrics()
+
+            # Salva il modello migliore con il nome finale appropriato
+            if self.best_model_path:
+                import shutil
+
+                temp_path = Path(self.best_model_path)
+                if temp_path.exists():
+                    # Salva con timestamp e ID del run
+                    final_path, _, _ = self.save_checkpoint()
+                    self.best_model_path = str(final_path)
+                    # Rimuovi il file temporaneo
+                    try:
+                        temp_path.unlink()
+                    except Exception:
+                        pass
+
+            print(f"\n{'='*60}")
+            print(f"Training completed!")
+            print(
+                f"Best model (MeanEpReturn={self.best_mean_return:.1f}): {self.best_model_path}"
+            )
+            print(f"{'='*60}\n")
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -568,13 +744,17 @@ class GAILTrainer:
                 "run_id": self.run_id,
                 "num_iterations": len(self.iteration_history),
                 "steps_per_collect": self._last_train_config.get("steps_per_collect"),
-                "discriminator_updates": self._last_train_config.get("discriminator_updates"),
+                "discriminator_updates": self._last_train_config.get(
+                    "discriminator_updates"
+                ),
                 "policy_updates": self._last_train_config.get("policy_updates"),
                 "epsilon": self._last_train_config.get("epsilon"),
             }
         )
         if self.training_start_time and self.training_end_time:
-            duration = (self.training_end_time - self.training_start_time).total_seconds()
+            duration = (
+                self.training_end_time - self.training_start_time
+            ).total_seconds()
             metadata["training_start"] = self.training_start_time.isoformat()
             metadata["training_end"] = self.training_end_time.isoformat()
             metadata["training_duration_seconds"] = round(duration, 2)
@@ -623,7 +803,9 @@ class GAILTrainer:
         self.policy.load_state_dict(checkpoint["model_state_dict"])
         print(f"Loaded BC weights from {checkpoint_path}")
 
-    def _prepare_expert_transitions(self, demonstrations: Sequence[dict]) -> List[Transition]:
+    def _prepare_expert_transitions(
+        self, demonstrations: Sequence[dict]
+    ) -> List[Transition]:
         transitions: List[Transition] = []
         for episode in demonstrations:
             self._reset_state_preprocessor()
@@ -646,7 +828,9 @@ class GAILTrainer:
                 next_idx = min(idx + 1, last_index)
                 next_state = encoded_states[next_idx]
                 reward = float(rewards[idx]) if rewards is not None else 0.0
-                done = bool(dones[idx]) if dones is not None else (idx == episode_len - 1)
+                done = (
+                    bool(dones[idx]) if dones is not None else (idx == episode_len - 1)
+                )
                 transitions.append(
                     Transition(
                         state=state,
@@ -665,17 +849,17 @@ class GAILTrainer:
         next_states_list = [t.next_state for t in transitions]
         dones_list = [t.done for t in transitions]
         rewards_list = [t.env_reward for t in transitions]
-        
+
         # Crea tensori direttamente sul device target
         states = torch.stack(states_list).to(self.device)
         actions = torch.tensor(actions_list, dtype=torch.long, device=self.device)
         next_states = torch.stack(next_states_list).to(self.device)
         dones = torch.tensor(dones_list, dtype=torch.float32, device=self.device)
         rewards = torch.tensor(rewards_list, dtype=torch.float32, device=self.device)
-        
+
         # Pulisci liste
         del states_list, actions_list, next_states_list, dones_list, rewards_list
-        
+
         return {
             "states": states,
             "actions": actions,
@@ -684,7 +868,9 @@ class GAILTrainer:
             "env_rewards": rewards,
         }
 
-    def _update_policy_q_learning(self, batch: dict, gail_rewards: torch.Tensor) -> float:
+    def _update_policy_q_learning(
+        self, batch: dict, gail_rewards: torch.Tensor
+    ) -> float:
         states = batch["states"].to(self.device)
         actions = batch["actions"].to(self.device)
         next_states = batch["next_states"].to(self.device)
@@ -704,7 +890,9 @@ class GAILTrainer:
         self.policy_optimizer.step()
         return float(loss.item())
 
-    def _update_policy_policy_gradient(self, batch: dict, gail_rewards: torch.Tensor) -> float:
+    def _update_policy_policy_gradient(
+        self, batch: dict, gail_rewards: torch.Tensor
+    ) -> float:
         states = batch["states"].to(self.device)
         actions = batch["actions"].to(self.device)
         gail_rewards = gail_rewards.to(self.device).squeeze(-1)
@@ -721,29 +909,209 @@ class GAILTrainer:
         return float(loss.item())
 
 
-USAGE_EXAMPLE = """
-Example: loading a BC policy and running GAIL
-------------------------------------------------
-import torch
-from behavioral_cloning import build_policy
-from discriminator import Discriminator
-from env_make import make_space_invaders_env
-from gail_trainer import GAILTrainer
+# -----------------------------------------------------------------------------
+# Interactive GAIL training script
+# -----------------------------------------------------------------------------
 
-policy = build_policy(model_type="dqn", num_actions=6)
-policy.policy_output_type = "q_values"  # mark as Q-network
 
-disc = Discriminator(observation_shape=(6, 210, 160), num_actions=6)
+def choose_model_file(model_files):
+    """Permette all'utente di scegliere un modello salvato."""
+    if not model_files:
+        print("\nNessun modello disponibile.")
+        return None
 
-env = make_space_invaders_env(render_mode=None)
-trainer = GAILTrainer(
-    policy=policy,
-    discriminator=disc,
-    env=env,
-    expert_files=["data/demonstrations/dem_YYMMDD_ID.pkl"],
-    bc_checkpoint_path="data/models/best_model.pth",
-    policy_output_type="q_values",
-)
-trainer.train(num_iterations=100)
-trainer.save_checkpoint()
-"""
+    # Filtra solo i file che esistono effettivamente
+    existing_models = [p for p in model_files if p.exists()]
+    if not existing_models:
+        print("\nNessun modello valido trovato.")
+        return None
+
+    sorted_models = sorted(
+        existing_models, key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    print("\n=== MODELLI DISPONIBILI PER GAIL ===")
+    for idx, model_path in enumerate(sorted_models, start=1):
+        timestamp = datetime.fromtimestamp(model_path.stat().st_mtime)
+        ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"  {idx}. {model_path.name} (ultimo update: {ts_str})")
+    print("Inserisci il numero del modello o 'q' per annullare. [ENTER = 1]")
+
+    while True:
+        choice = input("Modello: ").strip()
+        if choice.lower() in {"q", "quit", "exit"}:
+            return None
+        if not choice:
+            return sorted_models[0]
+        if choice.isdigit():
+            idx = int(choice)
+            if 1 <= idx <= len(sorted_models):
+                return sorted_models[idx - 1]
+        print("Input non valido, riprova.")
+
+
+def prompt_int_input(prompt: str, default: int) -> int:
+    """Helper per input intero con valore di default."""
+    while True:
+        user_input = input(prompt).strip()
+        if not user_input:
+            return default
+        if user_input.isdigit():
+            return int(user_input)
+        print(f"Inserisci un numero valido o premi ENTER per usare {default}")
+
+
+def prompt_float_input(prompt: str, default: float) -> float:
+    """Helper per input float con valore di default."""
+    while True:
+        user_input = input(prompt).strip()
+        if not user_input:
+            return default
+        try:
+            return float(user_input)
+        except ValueError:
+            print(f"Inserisci un numero valido o premi ENTER per usare {default}")
+
+
+def main(demo_files=None, model_files=None):
+    """Flusso interattivo per migliorare una policy tramite GAIL.
+
+    Args:
+        demo_files: Lista di Path con file delle dimostrazioni
+        model_files: Lista di Path con modelli trainati
+    """
+    from data_manager import DataManager
+    from behavioral_cloning import (
+        build_policy,
+        DEFAULT_MODEL_TYPE,
+        select_demonstration_files,
+        select_device,
+    )
+    from gail.gail_discriminator import Discriminator
+    from env_make import make_space_invaders_env
+    from test_model import BCAgent
+
+    if not demo_files:
+        print("\n⚠ Sono necessarie dimostrazioni per eseguire GAIL.")
+        return
+
+    if not model_files:
+        print("\n⚠ Sono necessari modelli trainati per eseguire GAIL.")
+        return
+
+    data_manager = DataManager()
+    model_path = choose_model_file(model_files)
+    if model_path is None:
+        print("\nOperazione annullata: nessun modello selezionato.")
+        return
+
+    checkpoint = data_manager.load_model(model_path, device="cpu")
+    run_metadata = checkpoint.get("run_metadata") or {}
+    model_type = run_metadata.get("model_type", DEFAULT_MODEL_TYPE)
+    frame_mode = BCAgent._determine_frame_mode(run_metadata, checkpoint) or "single"
+    frame_mode = frame_mode.lower()
+    stack_size = 2 if frame_mode == "stacked" else 1
+
+    print(f"\nModello selezionato: {model_path.name}")
+    print(f"Tipo architettura: {model_type} | Input: {frame_mode}")
+
+    selected_demo_files = select_demonstration_files(demo_files)
+    if not selected_demo_files:
+        print("\nOperazione annullata: nessuna dimostrazione selezionata.")
+        return
+
+    preview_data = data_manager.load_demonstrations(selected_demo_files[0])
+    first_episode = preview_data[0]
+    first_obs = first_episode["observations"][0]
+    if first_obs.ndim == 3:
+        base_channels = first_obs.shape[2]
+        height, width = first_obs.shape[0], first_obs.shape[1]
+        input_channels = base_channels * stack_size
+        observation_shape = (input_channels, height, width)
+    else:
+        base_dim = first_obs.shape[0]
+        input_channels = base_dim * stack_size
+        observation_shape = (input_channels,)
+
+    device = select_device()
+    env = make_space_invaders_env(render_mode=None)
+    num_actions = env.action_space.n
+
+    policy = build_policy(
+        model_type=model_type, num_actions=num_actions, in_channels=input_channels
+    )
+    policy_mode = "q_values" if model_type.lower() == "dqn" else "logits"
+    preprocessor = FrameStackPreprocessor(stack_size=stack_size)
+    discriminator = Discriminator(
+        observation_shape=observation_shape, num_actions=num_actions
+    )
+
+    print("\nConfigura training GAIL:")
+    num_iterations = prompt_int_input("Iterazioni GAIL [default: 20]: ", 20)
+    steps_per_collect = prompt_int_input(
+        "Passi raccolti per iterazione [default: 2048]: ", 2048
+    )
+    disc_updates = prompt_int_input(
+        "Aggiornamenti discriminatore per iterazione [default: 5]: ", 5
+    )
+    policy_updates = prompt_int_input(
+        "Aggiornamenti policy per iterazione [default: 1]: ", 1
+    )
+    epsilon = prompt_float_input("Epsilon esplorazione [default: 0.05]: ", 0.05)
+    buffer_capacity = prompt_int_input(
+        "Capacità agent buffer [default: 50000]: ", 50000
+    )
+
+    print("\nValidazione best model (raccomandato per identificare il vero migliore):")
+    use_validation_input = (
+        input("Validare con più episodi quando trova un potenziale best? [Y/n]: ")
+        .strip()
+        .lower()
+    )
+    use_validation = use_validation_input not in {"n", "no"}
+
+    validation_episodes = (
+        prompt_int_input("Episodi per validazione [default: 10]: ", 10)
+        if use_validation
+        else 10
+    )
+
+    trainer = GAILTrainer(
+        policy=policy,
+        discriminator=discriminator,
+        env=env,
+        expert_files=selected_demo_files,
+        bc_checkpoint_path=model_path,
+        policy_output_type=policy_mode,
+        state_preprocessor=preprocessor,
+        agent_buffer_capacity=buffer_capacity,
+        device=device,
+    )
+
+    try:
+        trainer.train(
+            num_iterations=num_iterations,
+            steps_per_collect=steps_per_collect,
+            discriminator_updates=disc_updates,
+            policy_updates=policy_updates,
+            epsilon=epsilon,
+            use_validation=use_validation,
+            validation_episodes=validation_episodes,
+        )
+    finally:
+        env.close()
+
+    print(f"\nMetriche GAIL salvate in: {trainer.metrics_csv_path}")
+    print(f"Best model salvato automaticamente in: {trainer.best_model_path}")
+
+
+if __name__ == "__main__":
+    # Esempio di utilizzo standalone
+    from pathlib import Path
+
+    demo_dir = Path("data/demonstrations")
+    model_dir = Path("data/models")
+
+    demo_files = sorted(demo_dir.glob("*.pkl")) if demo_dir.exists() else []
+    model_files = sorted(model_dir.glob("*.pth")) if model_dir.exists() else []
+
+    main(demo_files=demo_files, model_files=model_files)
