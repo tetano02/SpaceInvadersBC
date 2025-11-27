@@ -135,7 +135,7 @@ def main():
             print("\n" + "=" * 60)
             print("POLICY EVALUATION")
             print("=" * 60)
-            from test_model import main as test_main
+            from test_gail_model import main as test_main
 
             test_main()
 

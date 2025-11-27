@@ -520,13 +520,13 @@ class GAILTrainer:
     def train(
         self,
         num_iterations: int,
-        steps_per_collect: int = 2048,
-        discriminator_updates: int = 5,
+        steps_per_collect: int = 5000,
+        discriminator_updates: int = 2,
         policy_updates: int = 1,
         epsilon: float = 0.05,
         log_interval: int = 1,
         use_validation: bool = True,
-        validation_episodes: int = 10,
+        validation_episodes: int = 30,
     ) -> None:
         """Runs the full GAIL training loop.
 
@@ -610,12 +610,19 @@ class GAILTrainer:
 
                 gc.collect()  # Forza garbage collection
 
-                # Se il training mean suggerisce un miglioramento, valida approfonditamente
-                if mean_reward > self.best_mean_return:
+                # Se il training mean suggerisce un miglioramento (o è entro il 10% del best), valida approfonditamente
+                threshold = self.best_mean_return * 0.9  # 10% sotto il best
+                if mean_reward > threshold:
                     if use_validation:
-                        print(
-                            f"\n[Iter {iteration}] Potenziale best model (TrainMean={mean_reward:.1f})"
-                        )
+                        # Mostra se è potenziale best o solo vicino
+                        if mean_reward > self.best_mean_return:
+                            print(
+                                f"\n[Iter {iteration}] Potenziale best model (TrainMean={mean_reward:.1f})"
+                            )
+                        else:
+                            print(
+                                f"\n[Iter {iteration}] Modello vicino al best (TrainMean={mean_reward:.1f}, soglia={threshold:.1f})"
+                            )
                         print(
                             f"[Iter {iteration}] Valido con {validation_episodes} episodi..."
                         )
@@ -644,15 +651,16 @@ class GAILTrainer:
                             )
                     else:
                         # Senza validazione, usa direttamente il training mean
-                        self.best_mean_return = mean_reward
-                        saved_path, _, _ = self.save_checkpoint(
-                            filename="best_model_temp.pth"
-                        )
-                        self.best_model_path = str(saved_path)
-                        if iteration % log_interval == 0:
-                            print(
-                                f"[Iter {iteration}] New best model! MeanEpReturn={mean_reward:.1f}"
+                        if mean_reward > self.best_mean_return:
+                            self.best_mean_return = mean_reward
+                            saved_path, _, _ = self.save_checkpoint(
+                                filename="best_model_temp.pth"
                             )
+                            self.best_model_path = str(saved_path)
+                            if iteration % log_interval == 0:
+                                print(
+                                    f"[Iter {iteration}] New best model! MeanEpReturn={mean_reward:.1f}"
+                                )
 
                 if iteration % log_interval == 0:
                     print(
@@ -665,25 +673,61 @@ class GAILTrainer:
             self.training_end_time = datetime.now()
             self._export_iteration_metrics()
 
-            # Salva il modello migliore con il nome finale appropriato
-            if self.best_model_path:
-                import shutil
+            # Confronto finale: ultimo modello vs best model salvato
+            print(f"\n{'='*60}")
+            print("Confronto finale: ultimo modello vs best model")
+            print(f"{'='*60}")
 
+            # Valida sempre l'ultimo modello per confronto accurato
+            print(f"\nValutazione modello finale (iterazione {num_iterations})...")
+            final_val_stats = self.validate_policy(
+                num_episodes=validation_episodes, epsilon=0.0
+            )
+            final_mean = final_val_stats["mean_return"]
+            final_std = final_val_stats["std_return"]
+            print(f"Modello finale: MeanReturn={final_mean:.1f} (±{final_std:.1f})")
+
+            # Confronta con il best salvato
+            if self.best_model_path:
+                print(f"Best model salvato: MeanReturn={self.best_mean_return:.1f}")
+
+                if final_mean > self.best_mean_return:
+                    print(f"\n✓ Modello finale è migliore! Salvo come best model...")
+                    self.best_mean_return = final_mean
+                    final_best_mean = final_mean
+                    # Salva il modello corrente (che è il migliore)
+                    saved_path, _, _ = self.save_checkpoint(
+                        filename="best_model_temp.pth"
+                    )
+                    self.best_model_path = str(saved_path)
+                else:
+                    print(f"\n✓ Best model precedente è migliore, lo mantengo.")
+                    final_best_mean = self.best_mean_return
+            else:
+                # Nessun best salvato, usa l'ultimo
+                print("\nNessun best model precedente, salvo il modello finale.")
+                self.best_mean_return = final_mean
+                final_best_mean = final_mean
+                saved_path, _, _ = self.save_checkpoint(filename="best_model_temp.pth")
+                self.best_model_path = str(saved_path)
+
+            # Copia il best model con timestamp e ID del run (mantiene anche il temp)
+            if self.best_model_path:
                 temp_path = Path(self.best_model_path)
                 if temp_path.exists():
-                    # Salva con timestamp e ID del run
-                    final_path, _, _ = self.save_checkpoint()
+                    # Genera il nome finale con timestamp e ID
+                    final_filename = f"mod_{self.run_timestamp}_{self.run_id}.pth"
+                    final_path = temp_path.parent / final_filename
+                    # Copia invece di rinominare per mantenere best_model_temp.pth
+                    import shutil
+
+                    shutil.copy2(temp_path, final_path)
                     self.best_model_path = str(final_path)
-                    # Rimuovi il file temporaneo
-                    try:
-                        temp_path.unlink()
-                    except Exception:
-                        pass
 
             print(f"\n{'='*60}")
             print(f"Training completed!")
             print(
-                f"Best model (MeanEpReturn={self.best_mean_return:.1f}): {self.best_model_path}"
+                f"Best model (ValMeanReturn={final_best_mean:.1f}): {self.best_model_path}"
             )
             print(f"{'='*60}\n")
 
@@ -1046,12 +1090,12 @@ def main(demo_files=None, model_files=None):
     )
 
     print("\nConfigura training GAIL:")
-    num_iterations = prompt_int_input("Iterazioni GAIL [default: 20]: ", 20)
+    num_iterations = prompt_int_input("Iterazioni GAIL [default: 30]: ", 30)
     steps_per_collect = prompt_int_input(
-        "Passi raccolti per iterazione [default: 2048]: ", 2048
+        "Passi raccolti per iterazione [default: 5000]: ", 5000
     )
     disc_updates = prompt_int_input(
-        "Aggiornamenti discriminatore per iterazione [default: 5]: ", 5
+        "Aggiornamenti discriminatore per iterazione [default: 2]: ", 2
     )
     policy_updates = prompt_int_input(
         "Aggiornamenti policy per iterazione [default: 1]: ", 1
@@ -1070,10 +1114,36 @@ def main(demo_files=None, model_files=None):
     use_validation = use_validation_input not in {"n", "no"}
 
     validation_episodes = (
-        prompt_int_input("Episodi per validazione [default: 10]: ", 10)
+        prompt_int_input("Episodi per validazione [default: 30]: ", 30)
         if use_validation
-        else 10
+        else 30
     )
+
+    # Chiedi all'utente la baseline del modello BC
+    print("\n" + "=" * 60)
+    print("Baseline modello di partenza (BC)")
+    print("=" * 60)
+    print("Inserisci la performance media del modello BC per usarla come baseline.")
+    print(
+        "(Lascia vuoto per partire da -inf, qualsiasi modello sarà considerato migliore)"
+    )
+
+    baseline_input = input(
+        "MeanReturn del modello BC [default: nessuna baseline]: "
+    ).strip()
+
+    baseline_mean = None
+    if baseline_input:
+        try:
+            baseline_mean = float(baseline_input)
+            print(f"\nBaseline impostata: {baseline_mean:.1f}")
+            print("GAIL cercherà di superare questa performance.\n")
+        except ValueError:
+            print("Valore non valido. Nessuna baseline impostata.\n")
+    else:
+        print(
+            "Nessuna baseline impostata. Qualsiasi miglioramento sarà considerato best.\n"
+        )
 
     trainer = GAILTrainer(
         policy=policy,
@@ -1086,6 +1156,12 @@ def main(demo_files=None, model_files=None):
         agent_buffer_capacity=buffer_capacity,
         device=device,
     )
+
+    # Imposta la baseline come best_mean_return iniziale se disponibile
+    if baseline_mean is not None:
+        trainer.best_mean_return = baseline_mean
+        print(f"Baseline iniziale impostata: {baseline_mean:.1f}")
+        print("GAIL cercherà di superare questa performance.\n")
 
     try:
         trainer.train(
