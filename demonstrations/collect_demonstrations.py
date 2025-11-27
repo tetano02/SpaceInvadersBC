@@ -1,6 +1,6 @@
 """
-Script per raccogliere dimostrazioni umane giocando manualmente a Space Invaders.
-Usa i tasti freccia per muoverti e SPAZIO per sparare.
+Script to collect human demonstrations by manually playing Space Invaders.
+Use arrow keys to move and SPACE to fire.
 """
 
 import gymnasium as gym
@@ -23,7 +23,7 @@ from demonstrations.analyze_demonstrations import analyze_demonstrations_file, A
 
 
 class DemonstrationCollector:
-    """Raccoglie dimostrazioni umane per Behavioral Cloning."""
+    """Collects human demonstrations for Behavioral Cloning."""
 
     def __init__(self, env, fps=30, frame_skip=2):
         self.env = env
@@ -35,13 +35,13 @@ class DemonstrationCollector:
             "dones": [],
         }
         
-        # Clock per controllare il frame rate
+        # Clock to control frame rate
         self.clock = pygame.time.Clock()
         self.fps = fps
-        self.frame_skip = frame_skip  # Quanti frame eseguire per ogni azione registrata
+        self.frame_skip = frame_skip  # How many frames to execute for each recorded action
 
-        # Mappatura tasti -> azioni Space Invaders
-        # Azioni: 0=NOOP, 1=FIRE, 2=RIGHT, 3=LEFT, 4=RIGHTFIRE, 5=LEFTFIRE
+        # Key mapping -> Space Invaders actions
+        # Actions: 0=NOOP, 1=FIRE, 2=RIGHT, 3=LEFT, 4=RIGHTFIRE, 5=LEFTFIRE
         self.key_to_action = {
             pygame.K_SPACE: 1,  # FIRE
             pygame.K_RIGHT: 2,  # RIGHT
@@ -49,10 +49,10 @@ class DemonstrationCollector:
         }
 
     def get_human_action(self):
-        """Ottiene l'azione dall'input della tastiera."""
+        """Gets the action from keyboard input."""
         keys = pygame.key.get_pressed()
 
-        # Combinazioni di tasti
+        # Key combinations
         if keys[pygame.K_RIGHT] and keys[pygame.K_SPACE]:
             return 4  # RIGHTFIRE
         elif keys[pygame.K_LEFT] and keys[pygame.K_SPACE]:
@@ -67,7 +67,7 @@ class DemonstrationCollector:
             return 0  # NOOP
 
     def collect_episode(self):
-        """Raccoglie una singola partita."""
+        """Collects a single game."""
         observation, info = self.env.reset()
         done = False
         truncated = False
@@ -80,16 +80,16 @@ class DemonstrationCollector:
             "dones": [],
         }
 
-        print("\n=== NUOVA PARTITA ===")
-        print("Controlli:")
-        print("  ← →  : Muovi")
-        print("  SPAZIO : Spara")
-        print("  ESC : Termina raccolta")
-        print("  Q : Abbandona partita (non salva)")
+        print("\n=== NEW GAME ===")
+        print("Controls:")
+        print("  ← →  : Move")
+        print("  SPACE : Fire")
+        print("  ESC : End collection")
+        print("  Q : Quit game (don't save)")
         print("=====================\n")
 
         while not (done or truncated):
-            # Processa eventi Pygame
+            # Process Pygame events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return False, total_reward
@@ -97,17 +97,17 @@ class DemonstrationCollector:
                     if event.key == pygame.K_ESCAPE:
                         return False, total_reward
                     if event.key == pygame.K_q:
-                        print("Partita abbandonata (non salvata)")
+                        print("Game abandoned (not saved)")
                         return True, total_reward
 
-            # Ottieni azione umana
+            # Get human action
             action = self.get_human_action()
 
-            # Salva osservazione e azione (copia necessaria perché gym riusa il buffer)
+            # Save observation and action (copy necessary because gym reuses the buffer)
             self.current_episode["observations"].append(observation.copy())
             self.current_episode["actions"].append(action)
 
-            # Esegui l'azione per frame_skip frame e accumula reward
+            # Execute the action for frame_skip frames and accumulate reward
             frame_reward = 0
             for _ in range(self.frame_skip):
                 observation, reward, done, truncated, info = self.env.step(action)
@@ -117,17 +117,14 @@ class DemonstrationCollector:
                 if done or truncated:
                     break
                 
-                #self.clock.tick(self.fps)
-
-
-            # Salva reward accumulato e done
+            # Save accumulated reward and done
             self.current_episode["rewards"].append(frame_reward)
             self.current_episode["dones"].append(done or truncated)
             
-            # Limita il frame rate (una volta per azione, non per ogni frame skippato)
+            # Limit frame rate (once per action, not for each skipped frame)
             self.clock.tick(self.fps)
 
-        # Converti liste in array numpy per efficienza (una sola volta alla fine)
+        # Convert lists to numpy arrays for efficiency (only once at the end)
         episode_data = {
             "observations": np.array(
                 self.current_episode["observations"], dtype=np.uint8
@@ -143,10 +140,10 @@ class DemonstrationCollector:
             ),
         }
 
-        # Salva l'episodio completato
+        # Save the completed episode
         self.demonstrations.append(episode_data)
         
-        # Libera la memoria delle liste temporanee
+        # Free memory of temporary lists
         self.current_episode = {
             "observations": [],
             "actions": [],
@@ -154,31 +151,31 @@ class DemonstrationCollector:
             "dones": [],
         }
         
-        print(f"\nPartita completata! Reward totale: {total_reward}")
-        print(f"Passi registrati: {len(episode_data['actions'])}")
+        print(f"\nGame completed! Total reward: {total_reward}")
+        print(f"Recorded steps: {len(episode_data['actions'])}")
 
         return True, total_reward
 
     def collect_multiple_episodes(self, num_episodes=5):
-        """Raccoglie multiple partite."""
+        """Collects multiple games."""
         print(f"\n{'='*50}")
-        print(f"RACCOLTA DIMOSTRAZIONI - {num_episodes} partite")
+        print(f"DEMONSTRATIONS COLLECTION - {num_episodes} games")
         print(f"{'='*50}")
 
         episode_rewards = []
 
         for i in range(num_episodes):
-            print(f"\nPartita {i+1}/{num_episodes}")
+            print(f"\nGame {i+1}/{num_episodes}")
             continue_collection, reward = self.collect_episode()
 
             if not continue_collection:
-                print("\nRaccolta interrotta dall'utente.")
+                print("\nCollection interrupted by user.")
                 break
 
             episode_rewards.append(reward)
 
             if i < num_episodes - 1:
-                print("\nPremi un tasto per la prossima partita...")
+                print("\nPress a key for the next game...")
                 waiting = True
                 while waiting:
                     for event in pygame.event.get():
@@ -187,21 +184,21 @@ class DemonstrationCollector:
                             break
 
         print(f"\n{'='*50}")
-        print("RIEPILOGO RACCOLTA")
+        print("COLLECTION SUMMARY")
         print(f"{'='*50}")
-        print(f"Partite completate: {len(self.demonstrations)}")
+        print(f"Completed games: {len(self.demonstrations)}")
         if episode_rewards:
-            print(f"Reward medio: {np.mean(episode_rewards):.2f}")
+            print(f"Average reward: {np.mean(episode_rewards):.2f}")
             print(
-                f"Reward min/max: {np.min(episode_rewards):.2f} / {np.max(episode_rewards):.2f}"
+                f"Min/max reward: {np.min(episode_rewards):.2f} / {np.max(episode_rewards):.2f}"
             )
             total_steps = sum(len(ep["actions"]) for ep in self.demonstrations)
-            print(f"Passi totali registrati: {total_steps}")
+            print(f"Total recorded steps: {total_steps}")
 
         return self.demonstrations
 
     def save_demonstrations(self, filename=None):
-        """Salva le dimostrazioni su file usando DataManager."""
+        """Saves demonstrations to file using DataManager."""
         data_manager = DataManager()
         return data_manager.save_demonstrations(
             demonstrations=self.demonstrations, filename=filename, source="manual"
@@ -209,40 +206,38 @@ class DemonstrationCollector:
 
 
 def main():
-    """Funzione principale per raccogliere dimostrazioni."""
-    # Richiedi numero di partite PRIMA di inizializzare pygame
-    """try:
-        num_episodes = int(input("Quante partite vuoi giocare? [default: 5]: ") or "5")
+    """Main function to collect demonstrations."""
+    # Request number of games BEFORE initializing pygame
+    try:
+        num_episodes = int(input("How many games do you want to play? [default: 1]: ") or "1")
     except ValueError:
-        num_episodes = 5"""
-    
-    num_episodes = 1
+        num_episodes = 1
 
-    print(f"\nInizializzazione ambiente...")
+    print(f"\nInitializing environment...")
 
-    # Inizializza Pygame per catturare input
+    # Initialize Pygame to capture input
     pygame.init()
 
-    # Crea ambiente
+    # Create environment
     env = make_space_invaders_env(render_mode="human")
 
-    # Crea collector
+    # Create collector
     collector = DemonstrationCollector(env)
 
-    # Raccogli dimostrazioni
+    # Collect demonstrations
     demonstrations = collector.collect_multiple_episodes(num_episodes)
 
-    # Chiudi ambiente e pygame PRIMA dell'analisi
+    # Close environment and pygame BEFORE analysiss
     env.close()
     pygame.quit()
 
-    # Se ci sono dimostrazioni, analizzale e chiedi conferma
+    # If there are demonstrations, analyze them and ask for confirmation
     if demonstrations:
         print("\n" + "="*60)
-        print("ANALISI DELLE DIMOSTRAZIONI RACCOLTE")
+        print("COLLECTED DEMONSTRATIONS ANALYSIS")
         print("="*60)
         
-        # Crea temporaneamente un file per l'analisi
+        # Temporarily create a file for analysis
         data_manager = DataManager()
         temp_path, _ = data_manager.save_demonstrations(
             demonstrations=demonstrations,
@@ -250,7 +245,7 @@ def main():
             source="manual"
         )
         
-        # Analizza
+        # Analyze
         try:
             analyze_demonstrations_file(
                 temp_path,
@@ -258,29 +253,27 @@ def main():
                 data_manager=data_manager
             )
         finally:
-            # Rimuovi il file temporaneo
+            # Remove temporary file
             if temp_path.exists():
                 temp_path.unlink()
         
-        # Chiedi conferma per salvare
+        # Ask for confirmation to save
         print("\n" + "="*60)
         while True:
-            choice = input("\nVuoi salvare queste dimostrazioni? (s/n): ").strip().lower()
+            choice = input("\nDo you want to save these demonstrations? (y/n): ").strip().lower()
             if choice in ['s', 'si', 'sì', 'y', 'yes']:
                 saved_path, info = collector.save_demonstrations()
-                print(f"\n✓ Dimostrazioni salvate in: {saved_path}")
+                print(f"\n✓ Demonstrations saved in: {saved_path}")
                 break
             elif choice in ['n', 'no']:
-                print("\n✗ Dimostrazioni scartate (non salvate)")
+                print("\n✗ Demonstrations discarded (not saved)")
                 break
             else:
-                print("Per favore, rispondi 's' per sì o 'n' per no")
+                print("Please answer 'y' for yes or 'n' for no")
     else:
-        print("\nNessuna dimostrazione da salvare.")
+        print("\nNo demonstrations to save.")
 
-    print("\nRaccolta completata!")
-
-
+    print("\nCollection completed!")
 
 if __name__ == "__main__":
     main()

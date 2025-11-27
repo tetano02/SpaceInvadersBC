@@ -77,11 +77,11 @@ def default_state_preprocessor(observation: np.ndarray | torch.Tensor) -> torch.
     simply cast to float32.
     """
     try:
-        # Converti a numpy prima se è un tensor per ridurre memoria
+        # Convert to numpy first if it's a tensor to reduce memory
         if isinstance(observation, torch.Tensor):
             if observation.is_cuda:
                 observation = observation.cpu()
-            # Usa detach senza clone per evitare copia
+            # Use detach without clone to avoid copy
             arr = (
                 observation.detach().numpy()
                 if observation.requires_grad
@@ -90,23 +90,23 @@ def default_state_preprocessor(observation: np.ndarray | torch.Tensor) -> torch.
         else:
             arr = np.asarray(observation)
 
-        # Controlla se serve normalizzazione prima di convertire
+        # Check if normalization is needed before converting
         needs_norm = arr.max() > 1.0
 
-        # Converti a float32 e normalizza in un solo passaggio
+        # Convert to float32 and normalize in a single step
         if needs_norm:
             tensor = torch.from_numpy(arr.astype(np.float32) / 255.0)
         else:
             tensor = torch.from_numpy(arr.astype(np.float32))
 
-        # Permuta se necessario
+        # Permute if necessary
         if tensor.dim() == 3 and tensor.shape[-1] in {1, 3, 4, 6}:
             tensor = tensor.permute(2, 0, 1)
 
         return tensor
     except (RuntimeError, MemoryError) as e:
         if "not enough memory" in str(e) or isinstance(e, MemoryError):
-            # Forza garbage collection e riprova
+            # Force garbage collection and retry
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -139,10 +139,10 @@ class FrameStackPreprocessor:
             for _ in range(self.stack_size):
                 self._buffer.append(
                     tensor.clone()
-                )  # Clone per evitare reference allo stesso tensor
+                )  # Clone to avoid reference to the same tensor
         else:
             self._buffer.append(tensor)
-        # Usa stack invece di cat per essere più efficiente
+        # Use stack instead of cat for better efficiency
         result = torch.stack(list(self._buffer), dim=0).flatten(0, 1)
         return result
 
@@ -163,21 +163,17 @@ class ReplayBuffer:
 
     def __init__(self, capacity: int) -> None:
         self.capacity = int(capacity)
-        self.buffer: List[Transition] = []
+        self.buffer: deque[Transition] = deque(maxlen=self.capacity)
 
     def __len__(self) -> int:  # pragma: no cover - simple passthrough
         return len(self.buffer)
 
     def push(self, transition: Transition) -> None:
-        if len(self.buffer) >= self.capacity:
-            # Rimuovi e libera esplicitamente l'elemento più vecchio
-            old = self.buffer.pop(0)
-            del old
-        self.buffer.append(transition)
+        self.buffer.append(transition)  # deque automatically handles FIFO with maxlen
 
     def sample(self, batch_size: int) -> List[Transition]:
         batch_size = min(batch_size, len(self.buffer))
-        return random.sample(self.buffer, batch_size)
+        return random.sample(list(self.buffer), batch_size)
 
 
 # -----------------------------------------------------------------------------
@@ -301,9 +297,23 @@ class GAILTrainer:
         self.base_model_path = str(bc_checkpoint_path) if bc_checkpoint_path else None
         self.best_mean_return: float = -float("inf")
         self.best_model_path: Optional[str] = None
+
+        # Infer model_type and frame_mode from BC checkpoint if available
+        self.model_type: Optional[str] = None
+        self.frame_mode: Optional[str] = None
+        if bc_checkpoint_path:
+            bc_checkpoint = self.data_manager.load_model(
+                bc_checkpoint_path, device="cpu"
+            )
+            bc_metadata = bc_checkpoint.get("run_metadata") or {}
+            self.model_type = bc_metadata.get("model_type")
+            self.frame_mode = bc_metadata.get("frame_mode")
+
         self.training_metadata = {
             "training_type": "gail",
             "policy_output_type": self.policy_output_type,
+            "model_type": self.model_type,
+            "frame_mode": self.frame_mode,
             "base_model_path": self.base_model_path,
             "base_model_name": (
                 Path(self.base_model_path).name if self.base_model_path else "N/A"
@@ -342,7 +352,7 @@ class GAILTrainer:
         state = self._prepare_state(obs)
 
         while steps_collected < num_steps:
-            with torch.no_grad():  # Evita accumulo di gradienti
+            with torch.no_grad():  # Avoid gradient accumulation
                 action = select_action(
                     self.policy,
                     state,
@@ -366,10 +376,10 @@ class GAILTrainer:
             episode_return += reward
             steps_collected += 1
 
-            # Libera memoria dello stato precedente
+            # Free memory of previous state
             del state
 
-            # Pulizia periodica della memoria ogni 500 step
+            # Periodic memory cleanup every 500 steps
             if steps_collected % 500 == 0:
                 gc.collect()
                 if torch.cuda.is_available():
@@ -387,7 +397,7 @@ class GAILTrainer:
         if not episode_rewards:
             episode_rewards.append(episode_return)
 
-        # Pulisci riferimenti ai tensori
+        # Clean up tensor references
         del state, next_state
 
         return {"steps": steps_collected, "episode_rewards": episode_rewards}
@@ -438,7 +448,7 @@ class GAILTrainer:
             expert_acc = (torch.sigmoid(logits_expert) > 0.5).float().mean().item()
             agent_acc = (torch.sigmoid(logits_agent) < 0.5).float().mean().item()
 
-        # Libera memoria dei tensori intermedi
+        # Free memory of intermediate tensors
         del expert_states, expert_actions, agent_states, agent_actions
         del logits_expert, logits_agent, labels, logits
 
@@ -468,18 +478,23 @@ class GAILTrainer:
         return {"policy_loss": loss, "mode": "policy_gradient"}
 
     def validate_policy(self, num_episodes: int = 10, epsilon: float = 0.0) -> dict:
-        """Valida la policy corrente su un numero fisso di episodi completi.
+        """Validates the current policy on a fixed number of complete episodes.
 
         Args:
-            num_episodes: Numero di episodi da completare per la validazione
-            epsilon: Epsilon per esplorazione (default 0.0 = greedy)
+            num_episodes: Number of episodes to complete for validation
+            epsilon: Epsilon for exploration (default 0.0 = greedy)
 
         Returns:
-            Dict con mean_return, std_return, episode_rewards
+            Dict with mean_return, std_return, episode_rewards
         """
+        # Memory cleanup before validation
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         episode_rewards = []
 
-        for _ in range(num_episodes):
+        for episode_idx in range(num_episodes):
             episode_return = 0.0
             obs, _ = self.env.reset()
             self._reset_state_preprocessor()
@@ -500,12 +515,23 @@ class GAILTrainer:
                 episode_return += reward
 
                 if not done:
+                    # Free previous state
+                    del state
                     state = self._prepare_state(next_obs)
 
             episode_rewards.append(episode_return)
+            print(
+                f"  Episode {episode_idx + 1}/{num_episodes} done (reward: {episode_return:.1f})"
+            )
+
+            # Periodic cleanup every 10 episodes
+            if (episode_idx + 1) % 10 == 0:
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         mean_return = sum(episode_rewards) / len(episode_rewards)
-        # Calcola deviazione standard
+        # Calculate standard deviation
         variance = sum((r - mean_return) ** 2 for r in episode_rewards) / len(
             episode_rewards
         )
@@ -531,8 +557,8 @@ class GAILTrainer:
         """Runs the full GAIL training loop.
 
         Args:
-            use_validation: Se True, valida con più episodi quando trova un potenziale best model
-            validation_episodes: Numero di episodi per validazione approfondita
+            use_validation: If True, validates with more episodes when finding a potential best model
+            validation_episodes: Number of episodes for thorough validation
         """
 
         self.training_start_time = datetime.now()
@@ -556,7 +582,7 @@ class GAILTrainer:
                     agent_batch = self.sample_agent_batch()
                     disc_metrics = self.update_discriminator(expert_batch, agent_batch)
                     disc_losses.append(disc_metrics)
-                    # Libera batch dopo l'uso
+                    # Free batch after use
                     del expert_batch, agent_batch
 
                 agent_batch = self.sample_agent_batch()
@@ -601,30 +627,30 @@ class GAILTrainer:
                     ),
                 )
 
-                # Pulisci memoria DOPO aver registrato le metriche
+                # Clean memory AFTER recording metrics
                 del agent_batch, gail_rewards, disc_losses
 
-                # Pulisci cache CUDA ogni iterazione
+                # Clean CUDA cache every iteration
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-                gc.collect()  # Forza garbage collection
+                gc.collect()  # Force garbage collection
 
-                # Se il training mean suggerisce un miglioramento (o è entro il 10% del best), valida approfonditamente
-                threshold = self.best_mean_return * 0.9  # 10% sotto il best
+                # If training mean suggests improvement (or within 10% of best), validate thoroughly
+                threshold = self.best_mean_return * 0.9  # 10% below best
                 if mean_reward > threshold:
                     if use_validation:
-                        # Mostra se è potenziale best o solo vicino
+                        # Show if it's potential best or just close
                         if mean_reward > self.best_mean_return:
                             print(
-                                f"\n[Iter {iteration}] Potenziale best model (TrainMean={mean_reward:.1f})"
+                                f"\n[Iter {iteration}] Potential best model (TrainMean={mean_reward:.1f})"
                             )
                         else:
                             print(
-                                f"\n[Iter {iteration}] Modello vicino al best (TrainMean={mean_reward:.1f}, soglia={threshold:.1f})"
+                                f"\n[Iter {iteration}] Model close to best (TrainMean={mean_reward:.1f}, threshold={threshold:.1f})"
                             )
                         print(
-                            f"[Iter {iteration}] Valido con {validation_episodes} episodi..."
+                            f"[Iter {iteration}] Validating with {validation_episodes} episodes..."
                         )
                         val_stats = self.validate_policy(
                             num_episodes=validation_episodes, epsilon=0.0
@@ -635,7 +661,7 @@ class GAILTrainer:
                             f"[Iter {iteration}] Validation: MeanReturn={val_mean:.1f} (±{val_std:.1f})"
                         )
 
-                        # Salva SOLO se la validazione conferma il miglioramento
+                        # Save ONLY if validation confirms improvement
                         if val_mean > self.best_mean_return:
                             self.best_mean_return = val_mean
                             saved_path, _, _ = self.save_checkpoint(
@@ -643,14 +669,14 @@ class GAILTrainer:
                             )
                             self.best_model_path = str(saved_path)
                             print(
-                                f"[Iter {iteration}] ✓ Confermato! New best model: ValMean={val_mean:.1f}"
+                                f"[Iter {iteration}] ✓ Confirmed! New best model: ValMean={val_mean:.1f}"
                             )
                         else:
                             print(
-                                f"[Iter {iteration}] ✗ Non confermato (ValMean={val_mean:.1f} < Best={self.best_mean_return:.1f})"
+                                f"[Iter {iteration}] ✗ Not confirmed (ValMean={val_mean:.1f} < Best={self.best_mean_return:.1f})"
                             )
                     else:
-                        # Senza validazione, usa direttamente il training mean
+                        # Without validation, use training mean directly
                         if mean_reward > self.best_mean_return:
                             self.best_mean_return = mean_reward
                             saved_path, _, _ = self.save_checkpoint(
@@ -673,52 +699,52 @@ class GAILTrainer:
             self.training_end_time = datetime.now()
             self._export_iteration_metrics()
 
-            # Confronto finale: ultimo modello vs best model salvato
+            # Final comparison: last model vs best saved model
             print(f"\n{'='*60}")
-            print("Confronto finale: ultimo modello vs best model")
+            print("Final comparison: last model vs best model")
             print(f"{'='*60}")
 
-            # Valida sempre l'ultimo modello per confronto accurato
-            print(f"\nValutazione modello finale (iterazione {num_iterations})...")
+            # Always validate last model for accurate comparison
+            print(f"\nEvaluating final model (iteration {num_iterations})...")
             final_val_stats = self.validate_policy(
                 num_episodes=validation_episodes, epsilon=0.0
             )
             final_mean = final_val_stats["mean_return"]
             final_std = final_val_stats["std_return"]
-            print(f"Modello finale: MeanReturn={final_mean:.1f} (±{final_std:.1f})")
+            print(f"Final model: MeanReturn={final_mean:.1f} (±{final_std:.1f})")
 
-            # Confronta con il best salvato
+            # Compare with saved best
             if self.best_model_path:
-                print(f"Best model salvato: MeanReturn={self.best_mean_return:.1f}")
+                print(f"Best model saved: MeanReturn={self.best_mean_return:.1f}")
 
                 if final_mean > self.best_mean_return:
-                    print(f"\n✓ Modello finale è migliore! Salvo come best model...")
+                    print(f"\n✓ Final model is better! Saving as best model...")
                     self.best_mean_return = final_mean
                     final_best_mean = final_mean
-                    # Salva il modello corrente (che è il migliore)
+                    # Save current model (which is the best)
                     saved_path, _, _ = self.save_checkpoint(
                         filename="best_model_temp.pth"
                     )
                     self.best_model_path = str(saved_path)
                 else:
-                    print(f"\n✓ Best model precedente è migliore, lo mantengo.")
+                    print(f"\n✓ Previous best model is better, keeping it.")
                     final_best_mean = self.best_mean_return
             else:
-                # Nessun best salvato, usa l'ultimo
-                print("\nNessun best model precedente, salvo il modello finale.")
+                # No best saved, use the last one
+                print("\nNo previous best model, saving final model.")
                 self.best_mean_return = final_mean
                 final_best_mean = final_mean
                 saved_path, _, _ = self.save_checkpoint(filename="best_model_temp.pth")
                 self.best_model_path = str(saved_path)
 
-            # Copia il best model con timestamp e ID del run (mantiene anche il temp)
+            # Copy best model with run timestamp and ID (also keeps temp)
             if self.best_model_path:
                 temp_path = Path(self.best_model_path)
                 if temp_path.exists():
-                    # Genera il nome finale con timestamp e ID
+                    # Generate final name with timestamp and ID
                     final_filename = f"mod_{self.run_timestamp}_{self.run_id}.pth"
                     final_path = temp_path.parent / final_filename
-                    # Copia invece di rinominare per mantenere best_model_temp.pth
+                    # Copy instead of rename to keep best_model_temp.pth
                     import shutil
 
                     shutil.copy2(temp_path, final_path)
@@ -887,21 +913,21 @@ class GAILTrainer:
         return transitions
 
     def _transitions_to_batch(self, transitions: Sequence[Transition]) -> dict:
-        # Costruisci liste invece di stack immediato per ridurre picchi di memoria
+        # Build lists instead of immediate stack to reduce memory spikes
         states_list = [t.state for t in transitions]
         actions_list = [t.action for t in transitions]
         next_states_list = [t.next_state for t in transitions]
         dones_list = [t.done for t in transitions]
         rewards_list = [t.env_reward for t in transitions]
 
-        # Crea tensori direttamente sul device target
+        # Create tensors directly on target device
         states = torch.stack(states_list).to(self.device)
         actions = torch.tensor(actions_list, dtype=torch.long, device=self.device)
         next_states = torch.stack(next_states_list).to(self.device)
         dones = torch.tensor(dones_list, dtype=torch.float32, device=self.device)
         rewards = torch.tensor(rewards_list, dtype=torch.float32, device=self.device)
 
-        # Pulisci liste
+        # Clean up lists
         del states_list, actions_list, next_states_list, dones_list, rewards_list
 
         return {
@@ -959,29 +985,29 @@ class GAILTrainer:
 
 
 def choose_model_file(model_files):
-    """Permette all'utente di scegliere un modello salvato."""
+    """Allows the user to choose a saved model."""
     if not model_files:
-        print("\nNessun modello disponibile.")
+        print("\nNo models available.")
         return None
 
-    # Filtra solo i file che esistono effettivamente
+    # Filter only files that actually exist
     existing_models = [p for p in model_files if p.exists()]
     if not existing_models:
-        print("\nNessun modello valido trovato.")
+        print("\nNo valid models found.")
         return None
 
     sorted_models = sorted(
         existing_models, key=lambda p: p.stat().st_mtime, reverse=True
     )
-    print("\n=== MODELLI DISPONIBILI PER GAIL ===")
+    print("\n=== AVAILABLE MODELS FOR GAIL ===")
     for idx, model_path in enumerate(sorted_models, start=1):
         timestamp = datetime.fromtimestamp(model_path.stat().st_mtime)
         ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"  {idx}. {model_path.name} (ultimo update: {ts_str})")
-    print("Inserisci il numero del modello o 'q' per annullare. [ENTER = 1]")
+        print(f"  {idx}. {model_path.name} (last update: {ts_str})")
+    print("Enter the model number or 'q' to cancel. [ENTER = 1]")
 
     while True:
-        choice = input("Modello: ").strip()
+        choice = input("Model: ").strip()
         if choice.lower() in {"q", "quit", "exit"}:
             return None
         if not choice:
@@ -990,22 +1016,22 @@ def choose_model_file(model_files):
             idx = int(choice)
             if 1 <= idx <= len(sorted_models):
                 return sorted_models[idx - 1]
-        print("Input non valido, riprova.")
+        print("Invalid input, try again.")
 
 
 def prompt_int_input(prompt: str, default: int) -> int:
-    """Helper per input intero con valore di default."""
+    """Helper for integer input with default value."""
     while True:
         user_input = input(prompt).strip()
         if not user_input:
             return default
         if user_input.isdigit():
             return int(user_input)
-        print(f"Inserisci un numero valido o premi ENTER per usare {default}")
+        print(f"Enter a valid number or press ENTER to use {default}")
 
 
 def prompt_float_input(prompt: str, default: float) -> float:
-    """Helper per input float con valore di default."""
+    """Helper for float input with default value."""
     while True:
         user_input = input(prompt).strip()
         if not user_input:
@@ -1013,15 +1039,15 @@ def prompt_float_input(prompt: str, default: float) -> float:
         try:
             return float(user_input)
         except ValueError:
-            print(f"Inserisci un numero valido o premi ENTER per usare {default}")
+            print(f"Enter a valid number or press ENTER to use {default}")
 
 
 def main(demo_files=None, model_files=None):
-    """Flusso interattivo per migliorare una policy tramite GAIL.
+    """Interactive workflow to improve a policy via GAIL.
 
     Args:
-        demo_files: Lista di Path con file delle dimostrazioni
-        model_files: Lista di Path con modelli trainati
+        demo_files: List of Path with demonstration files
+        model_files: List of Path with trained models
     """
     from data_manager import DataManager
     from behavioral_cloning import (
@@ -1035,17 +1061,17 @@ def main(demo_files=None, model_files=None):
     from test_model import BCAgent
 
     if not demo_files:
-        print("\n⚠ Sono necessarie dimostrazioni per eseguire GAIL.")
+        print("\n⚠ Demonstrations are required to run GAIL.")
         return
 
     if not model_files:
-        print("\n⚠ Sono necessari modelli trainati per eseguire GAIL.")
+        print("\n⚠ Trained models are required to run GAIL.")
         return
 
     data_manager = DataManager()
     model_path = choose_model_file(model_files)
     if model_path is None:
-        print("\nOperazione annullata: nessun modello selezionato.")
+        print("\nOperation cancelled: no model selected.")
         return
 
     checkpoint = data_manager.load_model(model_path, device="cpu")
@@ -1055,12 +1081,12 @@ def main(demo_files=None, model_files=None):
     frame_mode = frame_mode.lower()
     stack_size = 2 if frame_mode == "stacked" else 1
 
-    print(f"\nModello selezionato: {model_path.name}")
-    print(f"Tipo architettura: {model_type} | Input: {frame_mode}")
+    print(f"\nSelected model: {model_path.name}")
+    print(f"Architecture type: {model_type} | Input: {frame_mode}")
 
     selected_demo_files = select_demonstration_files(demo_files)
     if not selected_demo_files:
-        print("\nOperazione annullata: nessuna dimostrazione selezionata.")
+        print("\nOperation cancelled: no demonstrations selected.")
         return
 
     preview_data = data_manager.load_demonstrations(selected_demo_files[0])
@@ -1089,60 +1115,60 @@ def main(demo_files=None, model_files=None):
         observation_shape=observation_shape, num_actions=num_actions
     )
 
-    print("\nConfigura training GAIL:")
-    num_iterations = prompt_int_input("Iterazioni GAIL [default: 30]: ", 30)
+    print("\nConfigure GAIL training:")
+    num_iterations = prompt_int_input("GAIL iterations [default: 30]: ", 30)
     steps_per_collect = prompt_int_input(
-        "Passi raccolti per iterazione [default: 5000]: ", 5000
+        "Steps collected per iteration [default: 5000]: ", 5000
     )
     disc_updates = prompt_int_input(
-        "Aggiornamenti discriminatore per iterazione [default: 2]: ", 2
+        "Discriminator updates per iteration [default: 2]: ", 2
     )
     policy_updates = prompt_int_input(
-        "Aggiornamenti policy per iterazione [default: 1]: ", 1
+        "Policy updates per iteration [default: 1]: ", 1
     )
-    epsilon = prompt_float_input("Epsilon esplorazione [default: 0.05]: ", 0.05)
+    epsilon = prompt_float_input("Exploration epsilon [default: 0.05]: ", 0.05)
     buffer_capacity = prompt_int_input(
-        "Capacità agent buffer [default: 50000]: ", 50000
+        "Agent buffer capacity [default: 50000]: ", 50000
     )
 
-    print("\nValidazione best model (raccomandato per identificare il vero migliore):")
+    print("\nBest model validation (recommended to identify true best):")
     use_validation_input = (
-        input("Validare con più episodi quando trova un potenziale best? [Y/n]: ")
+        input("Validate with more episodes when finding potential best? [Y/n]: ")
         .strip()
         .lower()
     )
     use_validation = use_validation_input not in {"n", "no"}
 
     validation_episodes = (
-        prompt_int_input("Episodi per validazione [default: 30]: ", 30)
+        prompt_int_input("Episodes for validation [default: 30]: ", 30)
         if use_validation
         else 30
     )
 
-    # Chiedi all'utente la baseline del modello BC
+    # Ask user for BC model baseline
     print("\n" + "=" * 60)
-    print("Baseline modello di partenza (BC)")
+    print("Starting model baseline (BC)")
     print("=" * 60)
-    print("Inserisci la performance media del modello BC per usarla come baseline.")
+    print("Enter the average performance of the BC model to use as baseline.")
     print(
-        "(Lascia vuoto per partire da -inf, qualsiasi modello sarà considerato migliore)"
+        "(Leave empty to start from -inf, any model will be considered better)"
     )
 
     baseline_input = input(
-        "MeanReturn del modello BC [default: nessuna baseline]: "
+        "BC model MeanReturn [default: no baseline]: "
     ).strip()
 
     baseline_mean = None
     if baseline_input:
         try:
             baseline_mean = float(baseline_input)
-            print(f"\nBaseline impostata: {baseline_mean:.1f}")
-            print("GAIL cercherà di superare questa performance.\n")
+            print(f"\nBaseline set: {baseline_mean:.1f}")
+            print("GAIL will try to exceed this performance.\n")
         except ValueError:
-            print("Valore non valido. Nessuna baseline impostata.\n")
+            print("Invalid value. No baseline set.\n")
     else:
         print(
-            "Nessuna baseline impostata. Qualsiasi miglioramento sarà considerato best.\n"
+            "No baseline set. Any improvement will be considered best.\n"
         )
 
     trainer = GAILTrainer(
@@ -1157,11 +1183,11 @@ def main(demo_files=None, model_files=None):
         device=device,
     )
 
-    # Imposta la baseline come best_mean_return iniziale se disponibile
+    # Set baseline as initial best_mean_return if available
     if baseline_mean is not None:
         trainer.best_mean_return = baseline_mean
-        print(f"Baseline iniziale impostata: {baseline_mean:.1f}")
-        print("GAIL cercherà di superare questa performance.\n")
+        print(f"Initial baseline set: {baseline_mean:.1f}")
+        print("GAIL will try to exceed this performance.\n")
 
     try:
         trainer.train(
@@ -1176,12 +1202,12 @@ def main(demo_files=None, model_files=None):
     finally:
         env.close()
 
-    print(f"\nMetriche GAIL salvate in: {trainer.metrics_csv_path}")
-    print(f"Best model salvato automaticamente in: {trainer.best_model_path}")
+    print(f"\nGAIL metrics saved in: {trainer.metrics_csv_path}")
+    print(f"Best model automatically saved in: {trainer.best_model_path}")
 
 
 if __name__ == "__main__":
-    # Esempio di utilizzo standalone
+    # Standalone usage example
     from pathlib import Path
 
     demo_dir = Path("data/demonstrations")

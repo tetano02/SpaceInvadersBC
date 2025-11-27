@@ -1,14 +1,11 @@
-"""Utility per rivedere le dimostrazioni salvate mostrando i frame originali."""
+"""Utility to review saved demonstrations by displaying the original frames."""
 
-import argparse
-import sys
-import time
 import warnings
 from pathlib import Path
 
 import numpy as np
 
-# Pygame importa ancora pkg_resources all'avvio: silenziamo il warning finché upstream non migra
+# Pygame still imports pkg_resources at startup: silence the warning until upstream migrates
 warnings.filterwarnings(
     "ignore",
     message="pkg_resources is deprecated as an API.*",
@@ -21,48 +18,17 @@ import pygame
 from data_manager import DataManager
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Riproduce visivamente le dimostrazioni salvate",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument("--file", type=str, help="File di dimostrazioni da riprodurre")
-    parser.add_argument(
-        "--fps", type=int, default=30, help="Frame al secondo durante la riproduzione"
-    )
-    parser.add_argument(
-        "--scale", type=float, default=3.0, help="Fattore di scala della finestra"
-    )
-    parser.add_argument(
-        "--episode",
-        type=int,
-        default=None,
-        help="Numero (1-based) dell'episodio da riprodurre subito",
-    )
-    parser.add_argument(
-        "--loop",
-        action="store_true",
-        help="Riproduce in loop tutti gli episodi finché non si chiude la finestra",
-    )
-    parser.add_argument(
-        "--list",
-        action="store_true",
-        help="Mostra l'elenco dei file disponibili e termina",
-    )
-    return parser.parse_args()
-
-
 def prompt_for_demo_file(data_manager: DataManager) -> Path | None:
     files = data_manager.list_demonstrations()
     if not files:
-        print("\n⚠ Nessuna dimostrazione trovata in data/demonstrations")
+        print("\n⚠ No demonstrations found in data/demonstrations")
         return None
 
     if len(files) == 1:
-        print(f"\nUtilizzo file: {files[0]}")
+        print(f"\nUsing file: {files[0]}")
         return files[0]
 
-    print("\nDimostrazioni disponibili:")
+    print("\nAvailable demonstrations:")
     for idx, file in enumerate(files, start=1):
         info = data_manager.get_demonstrations_info(file)
         print(
@@ -70,27 +36,69 @@ def prompt_for_demo_file(data_manager: DataManager) -> Path | None:
         )
 
     while True:
-        choice = input("Seleziona il numero del file da riprodurre: ").strip()
+        choice = input("Select the file number to play back: ").strip()
         if not choice.isdigit():
-            print("Inserisci un numero valido")
+            print("Enter a valid number")
             continue
         choice_idx = int(choice)
         if 1 <= choice_idx <= len(files):
             return files[choice_idx - 1]
-        print("Indice fuori range, riprova")
+        print("Index out of range, try again")
 
 
-def load_demonstrations(file_arg: str | None, data_manager: DataManager):
-    if file_arg:
-        selected = Path(file_arg)
+def prompt_for_settings():
+    """Prompt user for playback settings."""
+    print("\n--- Playback Settings ---")
+
+    # FPS
+    while True:
+        fps_input = input("FPS (frames per second, default 30): ").strip()
+        if not fps_input:
+            fps = 30
+            break
+        if fps_input.isdigit() and int(fps_input) > 0:
+            fps = int(fps_input)
+            break
+        print("Enter a valid positive number")
+
+    # Scale
+    while True:
+        scale_input = input("Window scale factor (default 3.0): ").strip()
+        if not scale_input:
+            scale = 3.0
+            break
+        try:
+            scale = float(scale_input)
+            if scale > 0:
+                break
+            print("Enter a positive number")
+        except ValueError:
+            print("Enter a valid number")
+
+    # Start episode
+    start_episode_input = input(
+        "Start from episode number (press Enter to start from 1): "
+    ).strip()
+    if start_episode_input.isdigit():
+        start_episode = int(start_episode_input)
     else:
-        selected = prompt_for_demo_file(data_manager)
+        start_episode = None
+
+    # Loop
+    loop_input = input("Loop all episodes? (y/n, default n): ").strip().lower()
+    loop = loop_input == "y" or loop_input == "yes"
+
+    return fps, scale, start_episode, loop
+
+
+def load_demonstrations(data_manager: DataManager):
+    selected = prompt_for_demo_file(data_manager)
 
     if selected is None:
         return None, None
 
     if not selected.exists():
-        print(f"\n⚠ File non trovato: {selected}")
+        print(f"\n⚠ File not found: {selected}")
         return None, None
 
     demonstrations = data_manager.load_demonstrations(selected)
@@ -101,12 +109,12 @@ def create_window(first_frame: np.ndarray, scale: float):
     height, width = first_frame.shape[:2]
     window_size = (int(width * scale), int(height * scale))
     screen = pygame.display.set_mode(window_size)
-    pygame.display.set_caption("Replay Dimostrazioni - Space Invaders")
+    pygame.display.set_caption("Demonstrations Replay - Space Invaders")
     return screen, pygame.time.Clock(), window_size
 
 
 def draw_frame(screen, frame, window_size):
-    # Pygame si aspetta superfici trasposte rispetto a NumPy (w, h, c)
+    # Pygame expects transposed surfaces compared to NumPy (w, h, c)
     surface = pygame.surfarray.make_surface(np.transpose(frame, (1, 0, 2)))
     if surface.get_size() != window_size:
         surface = pygame.transform.scale(surface, window_size)
@@ -154,7 +162,7 @@ def play_episode(
 
         if paused:
             draw_overlay(
-                screen, font, "Pausa - premi SPACE per riprendere", position=(10, 10)
+                screen, font, "Paused - press SPACE to resume", position=(10, 10)
             )
             pygame.display.flip()
             clock.tick(15)
@@ -165,7 +173,7 @@ def play_episode(
 
         overlay_text = (
             f"Ep {episode_idx + 1}/{total_episodes}  |  Step {step + 1}/{num_steps}  |  "
-            f"Azione: {int(actions[step])}  |  Reward cum.: {total_reward:.1f}"
+            f"Action: {int(actions[step])}  |  Cumul. Reward: {total_reward:.1f}"
         )
         draw_overlay(screen, font, overlay_text)
 
@@ -178,7 +186,7 @@ def play_episode(
 
 def replay_demonstrations(demonstrations, fps, scale, start_episode, loop):
     if not demonstrations:
-        print("\n⚠ Il file non contiene episodi da riprodurre")
+        print("\n⚠ The file contains no episodes to play back")
         return
 
     first_frame = demonstrations[0]["observations"][0]
@@ -221,39 +229,27 @@ def replay_demonstrations(demonstrations, fps, scale, start_episode, loop):
 
 
 def main():
-    args = parse_args()
     data_manager = DataManager()
 
-    if args.list:
-        files = data_manager.list_demonstrations()
-        if not files:
-            print("\nNessuna dimostrazione trovata.")
-            return 0
-        print("\nFile disponibili:")
-        for file in files:
-            info = data_manager.get_demonstrations_info(file)
-            print(
-                f"- {file.name} | episodi: {info['num_episodes']} | steps: {info['total_steps']} | source: {info['source']}"
-            )
-        return 0
-
-    demonstrations, selected_file = load_demonstrations(args.file, data_manager)
+    demonstrations, selected_file = load_demonstrations(data_manager)
     if demonstrations is None:
         return 1
 
-    print(f"\nRiproduzione dimostrazioni da: {selected_file}")
+    fps, scale, start_episode, loop = prompt_for_settings()
+
+    print(f"\nPlaying back demonstrations from: {selected_file}")
     print(
-        "Controlli: SPACE/P per pausa, RIGHT episodio successivo, LEFT precedente, R restart, ESC per uscire"
+        "Controls: SPACE/P for pause, RIGHT next episode, LEFT previous, R restart, ESC to exit"
     )
 
     pygame.init()
     try:
         replay_demonstrations(
             demonstrations,
-            fps=max(1, args.fps),
-            scale=max(1.0, args.scale),
-            start_episode=args.episode,
-            loop=args.loop,
+            fps=fps,
+            scale=scale,
+            start_episode=start_episode,
+            loop=loop,
         )
     finally:
         pygame.quit()

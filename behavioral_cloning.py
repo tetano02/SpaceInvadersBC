@@ -1,6 +1,6 @@
 """
-Implementazione di Behavioral Cloning per Space Invaders.
-Addestra una rete neurale a imitare le dimostrazioni umane.
+Behavioral Cloning implementation for Space Invaders.
+Trains a neural network to imitate human demonstrations.
 """
 
 import torch
@@ -15,23 +15,23 @@ from data_manager import DataManager
 
 
 class BCDataset(Dataset):
-    """Dataset per Behavioral Cloning."""
+    """Dataset for Behavioral Cloning."""
 
     def __init__(self, demonstrations, frame_mode: str = "single"):
-        """Inizializza il dataset.
+        """Initializes the dataset.
 
         Args:
-            demonstrations: lista di episodi con observations e actions
-            frame_mode: "single" per usare un solo frame, "stacked" per concatenare
-                frame precedente e corrente lungo il canale
+            demonstrations: list of episodes with observations and actions
+            frame_mode: "single" to use a single frame, "stacked" to concatenate
+                previous and current frame along the channel
         """
         self.frame_mode = (frame_mode or "single").lower()
         if self.frame_mode not in {"single", "stacked"}:
-            raise ValueError("frame_mode deve essere 'single' o 'stacked'")
+            raise ValueError("frame_mode must be 'single' or 'stacked'")
 
         self.samples = []
 
-        # Estrai tutte le tuple (prev_obs, obs, action) mantenendo la sequenza temporale
+        # Extract all (prev_obs, obs, action) tuples maintaining temporal sequence
         for episode in demonstrations:
             prev_obs = None
             for obs, action in zip(episode["observations"], episode["actions"]):
@@ -44,7 +44,7 @@ class BCDataset(Dataset):
                 })
                 prev_obs = obs
 
-        print(f"Dataset creato con {len(self.samples)} campioni (frame_mode={self.frame_mode})")
+        print(f"Dataset created with {len(self.samples)} samples (frame_mode={self.frame_mode})")
 
     def __len__(self):
         return len(self.samples)
@@ -64,7 +64,7 @@ class BCDataset(Dataset):
 
 
 class BCPolicy(nn.Module):
-    """Rete neurale stile DQN (CNN + MLP) per Behavioral Cloning."""
+    """DQN-style neural network (CNN + MLP) for Behavioral Cloning."""
 
     def __init__(self, num_actions=6, in_channels=3):
         super(BCPolicy, self).__init__()
@@ -95,7 +95,7 @@ class BCPolicy(nn.Module):
 
 
 class BCMLPPolicy(nn.Module):
-    """Multi-layer perceptron che lavora sull'immagine flattenata."""
+    """Multi-layer perceptron working on flattened image."""
 
     def __init__(self, num_actions=6, in_channels=3):
         super().__init__()
@@ -115,7 +115,7 @@ class BCMLPPolicy(nn.Module):
 
 
 class BCVisionTransformer(nn.Module):
-    """Vision Transformer compatto per osservazioni Atari."""
+    """Compact Vision Transformer for Atari observations."""
 
     def __init__(
         self,
@@ -134,7 +134,7 @@ class BCVisionTransformer(nn.Module):
         self.patch_size = patch_size
 
         if image_size[0] % patch_size[0] != 0 or image_size[1] % patch_size[1] != 0:
-            raise ValueError("patch_size deve dividere esattamente image_size per altezza e larghezza")
+            raise ValueError("patch_size must divide image_size exactly for height and width")
 
         self.patch_embed = nn.Conv2d(
             in_channels=in_channels,
@@ -188,17 +188,17 @@ class BCVisionTransformer(nn.Module):
 MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
     "dqn": {
         "label": "DQN CNN",
-        "description": "CNN con tre conv e testa fully-connected (default)",
+        "description": "CNN with three conv layers and fully-connected head (default)",
         "builder": lambda num_actions, **kwargs: BCPolicy(num_actions=num_actions, **kwargs),
     },
     "mlp": {
         "label": "Multi-Layer Perceptron",
-        "description": "Rete fully-connected su osservazione flattenata",
+        "description": "Fully-connected network on flattened observation",
         "builder": lambda num_actions, **kwargs: BCMLPPolicy(num_actions=num_actions, **kwargs),
     },
     "vit": {
         "label": "Vision Transformer",
-        "description": "Transformer compatto con patch embedding (più esigente in VRAM)",
+        "description": "Compact Transformer with patch embedding (more demanding on VRAM)",
         "builder": lambda num_actions, **kwargs: BCVisionTransformer(num_actions=num_actions, **kwargs),
     },
 }
@@ -207,28 +207,28 @@ DEFAULT_MODEL_TYPE = "dqn"
 
 
 def get_available_model_types():
-    """Restituisce il catalogo dei modelli registrati."""
+    """Returns the catalog of registered models."""
     return MODEL_REGISTRY
 
 
 def build_policy(model_type: str, num_actions: int = 6, **model_kwargs):
-    """Istanzia il modello richiesto, propagando eventuali kwargs."""
+    """Instantiates the requested model, propagating any kwargs."""
     key = (model_type or DEFAULT_MODEL_TYPE).lower()
     spec = MODEL_REGISTRY.get(key)
     if spec is None:
         valid = ", ".join(MODEL_REGISTRY.keys())
-        raise ValueError(f"Model '{model_type}' non supportato. Opzioni: {valid}")
+        raise ValueError(f"Model '{model_type}' not supported. Options: {valid}")
     return spec["builder"](num_actions=num_actions, **model_kwargs)
 
 
 def prompt_model_type(default: str = DEFAULT_MODEL_TYPE):
-    """Permette all'utente di scegliere il tipo di modello da usare."""
+    """Allows the user to choose the model type to use."""
     options = list(MODEL_REGISTRY.items())
-    print("\n=== SELEZIONE MODELLO BC ===")
+    print("\n=== BC MODEL SELECTION ===")
     for idx, (key, spec) in enumerate(options, start=1):
         default_tag = " (default)" if key == default else ""
         print(f"{idx}. {spec['label']} [{key}]{default_tag}\n   {spec['description']}")
-    print("Scegli inserendo il numero o premi ENTER per il default.")
+    print("Choose by entering the number or press ENTER for default.")
 
     while True:
         choice = input("Modello: ").strip()
@@ -238,30 +238,30 @@ def prompt_model_type(default: str = DEFAULT_MODEL_TYPE):
             idx = int(choice) - 1
             if 0 <= idx < len(options):
                 return options[idx][0]
-        print("Input non valido. Riprova.")
+        print("Invalid input. Try again.")
 
 
 def prompt_frame_mode(default: str = "single"):
-    """Chiede se usare un solo frame o due frame concatenati."""
-    choices = [("single", "Frame singolo (3 canali)"), ("stacked", "Due frame consecutivi (6 canali)")]
-    print("\n=== SELEZIONE TIPO DI INPUT ===")
+    """Asks whether to use a single frame or two concatenated frames."""
+    choices = [("single", "Single frame (3 channels)"), ("stacked", "Two consecutive frames (6 channels)")]
+    print("\n=== INPUT TYPE SELECTION ===")
     for idx, (key, label) in enumerate(choices, start=1):
         default_tag = " (default)" if key == default else ""
         print(f"{idx}. {label}{default_tag}")
 
     while True:
-        choice = input("Input desiderato: ").strip()
+        choice = input("Desired input: ").strip()
         if not choice:
             return default
         if choice.isdigit():
             idx = int(choice) - 1
             if 0 <= idx < len(choices):
                 return choices[idx][0]
-        print("Input non valido. Riprova.")
+        print("Invalid input. Try again.")
 
 
 class BCTrainer:
-    """Trainer per Behavioral Cloning."""
+    """Trainer for Behavioral Cloning."""
 
     def __init__(
         self,
@@ -281,14 +281,14 @@ class BCTrainer:
         self.train_accuracies = []
         self.val_accuracies = []
 
-        # Inizializza DataManager
+        # Initialize DataManager
         self.data_manager = DataManager()
 
-        # Memorizza timestamp e id per sincronizzazione con plot
+        # Store timestamp and id for synchronization with plots
         self.last_save_timestamp = None
         self.last_save_id = None
 
-        # Informazioni della run
+        # Run information
         self.run_timestamp, self.run_id = self.data_manager.create_run_identifier()
         self.metrics_csv_path = self.data_manager.get_metrics_filepath(
             self.run_timestamp, self.run_id
@@ -300,10 +300,10 @@ class BCTrainer:
         self.run_start_time = None
         self.run_end_time = None
 
-        print(f"Usando device: {device}")
+        print(f"Using device: {device}")
 
     def configure_run(self, metadata):
-        """Configura le informazioni della run (ambiente, dataset, ecc.)."""
+        """Configures run information (environment, dataset, etc.)."""
         if metadata is None:
             metadata = {}
         self.run_metadata.update(metadata)
@@ -313,7 +313,7 @@ class BCTrainer:
         )
 
     def train_epoch(self, train_loader):
-        """Addestra per una epoch."""
+        """Trains for one epoch."""
         self.policy.train()
         total_loss = 0
         correct = 0
@@ -334,7 +334,7 @@ class BCTrainer:
             loss.backward()
             self.optimizer.step()
 
-            # Statistiche
+            # Statistics
             total_loss += loss.item()
             _, predicted = torch.max(predictions.data, 1)
             total += actions.size(0)
@@ -354,7 +354,7 @@ class BCTrainer:
         return avg_loss, accuracy
 
     def validate(self, val_loader):
-        """Valida il modello."""
+        """Validates the model."""
         self.policy.eval()
         total_loss = 0
         correct = 0
@@ -379,9 +379,9 @@ class BCTrainer:
         return avg_loss, accuracy
 
     def train(self, train_loader, val_loader, num_epochs=50):
-        """Addestra il modello per multiple epochs."""
+        """Trains the model for multiple epochs."""
         print(f"\n{'='*50}")
-        print("INIZIO TRAINING")
+        print("TRAINING START")
         print(f"{'='*50}")
         self.run_start_time = datetime.now()
 
@@ -398,33 +398,33 @@ class BCTrainer:
             self.val_losses.append(val_loss)
             self.val_accuracies.append(val_acc)
 
-            # Stampa progresso
+            # Print progress
             print(
                 f"Epoch {epoch+1}/{num_epochs} - "
                 f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}% - "
                 f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%"
             )
 
-            # Salva miglior modello
+            # Save best model
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 self.save_model("best_model.pth")
 
         print(f"\n{'='*50}")
-        print("TRAINING COMPLETATO")
-        print(f"Miglior validation loss: {best_val_loss:.4f}")
+        print("TRAINING COMPLETED")
+        print(f"Best validation loss: {best_val_loss:.4f}")
         print(f"{'='*50}\n")
         self.run_end_time = datetime.now()
-        # Salva il modello finale con lo stesso timestamp/id della run
+        # Save final model with the same timestamp/id as the run
         self.save_model()
 
         self._export_training_metrics(num_epochs)
 
-        # Plot risultati (usa timestamp e id dell'ultimo salvataggio)
+        # Plot results (uses timestamp and id of last save)
         self.plot_training_history()
 
     def _export_training_metrics(self, num_epochs):
-        """Salva su CSV metadati e metriche della run."""
+        """Saves run metadata and metrics to CSV."""
         if self.run_start_time is None or self.run_end_time is None:
             return
         duration = (self.run_end_time - self.run_start_time).total_seconds()
@@ -477,8 +477,8 @@ class BCTrainer:
         )
 
     def plot_training_history(self):
-        """Plotta loss e accuracy durante training usando DataManager.
-        Usa timestamp e ID dell'ultimo modello salvato per sincronizzazione."""
+        """Plots loss and accuracy during training using DataManager.
+        Uses timestamp and ID of last saved model for synchronization."""
         return self.data_manager.save_training_plot(
             train_losses=self.train_losses,
             val_losses=self.val_losses,
@@ -490,8 +490,8 @@ class BCTrainer:
         )
 
     def save_model(self, filename=None):
-        """Salva il modello usando DataManager.
-        Memorizza timestamp e ID per sincronizzazione con i plot."""
+        """Saves the model using DataManager.
+        Stores timestamp and ID for synchronization with plots."""
         metadata = {
             "run_timestamp": self.run_timestamp,
             "run_id": self.run_id,
@@ -515,7 +515,7 @@ class BCTrainer:
             save_kwargs["filename"] = filename
         filepath, timestamp, model_id = self.data_manager.save_model(**save_kwargs)
 
-        # Salva timestamp e id per sincronizzazione con plot
+        # Save timestamp and id for synchronization with plots
         if timestamp is not None and model_id is not None:
             self.last_save_timestamp = timestamp
             self.last_save_id = model_id
@@ -523,7 +523,7 @@ class BCTrainer:
         return filepath
 
     def load_model(self, filename):
-        """Carica il modello usando DataManager."""
+        """Loads the model using DataManager."""
         checkpoint = self.data_manager.load_model(filename, device=self.device)
 
         self.policy.load_state_dict(checkpoint["model_state_dict"])
@@ -537,13 +537,13 @@ class BCTrainer:
 
 
 def get_available_devices():
-    """Restituisce una lista di dispositivi disponibili con i loro nomi."""
+    """Returns a list of available devices with their names."""
     devices = []
     
-    # CPU è sempre disponibile
+    # CPU is always available
     devices.append({"name": "CPU", "device": "cpu"})
     
-    # Controlla disponibilità GPU
+    # Check GPU availability
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
             gpu_name = torch.cuda.get_device_name(i)
@@ -553,17 +553,17 @@ def get_available_devices():
 
 
 def select_device():
-    """Chiede all'utente di selezionare un dispositivo per il training."""
+    """Asks the user to select a device for training."""
     devices = get_available_devices()
     
-    print("\nDispositivi disponibili:")
+    print("\nAvailable devices:")
     for idx, device_info in enumerate(devices, 1):
         print(f"  {idx}. {device_info['name']}")
     
     while True:
-        choice = input(f"\nSeleziona dispositivo (1-{len(devices)}) [default: 1]: ").strip()
+        choice = input(f"\nSelect device (1-{len(devices)}) [default: 1]: ").strip()
         
-        # Default a CPU (opzione 1)
+        # Default to CPU (option 1)
         if not choice:
             choice = "1"
         
@@ -571,42 +571,42 @@ def select_device():
             choice_idx = int(choice) - 1
             if 0 <= choice_idx < len(devices):
                 selected_device = devices[choice_idx]
-                print(f"Dispositivo selezionato: {selected_device['name']}")
+                print(f"Selected device: {selected_device['name']}")
                 return selected_device['device']
             else:
-                print(f"⚠ Scelta non valida! Seleziona un numero tra 1 e {len(devices)}.")
+                print(f"⚠ Invalid choice! Select a number between 1 and {len(devices)}.")
         except ValueError:
-            print(f"⚠ Input non valido! Inserisci un numero tra 1 e {len(devices)}.")
+            print(f"⚠ Invalid input! Enter a number between 1 and {len(devices)}.")
 
 
 def load_demonstrations(filepath):
-    """Carica dimostrazioni da file usando DataManager."""
+    """Loads demonstrations from file using DataManager."""
     data_manager = DataManager()
     return data_manager.load_demonstrations(filepath)
 
 
 def select_demonstration_files(demo_files):
-    """Permette all'utente di scegliere uno o più file di dimostrazioni."""
+    """Allows the user to choose one or more demonstration files."""
     sorted_files = sorted(demo_files, key=lambda p: p.stat().st_mtime, reverse=True)
 
-    print("\nFile di dimostrazioni disponibili:")
+    print("\nAvailable demonstration files:")
     for idx, demo_path in enumerate(sorted_files, 1):
         timestamp = datetime.fromtimestamp(demo_path.stat().st_mtime)
         size_mb = demo_path.stat().st_size / (1024 * 1024)
         print(
             f"  {idx}. {demo_path.name}"
-            f" | modificato il {timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            f" | modified on {timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
             f" | {size_mb:.2f} MB"
         )
 
     print(
-        "\nPuoi inserire un solo numero (es. 1) oppure più numeri separati da virgola"
-        " (es. 1,3,4) per aggregare le dimostrazioni."
+        "\nYou can enter a single number (e.g. 1) or multiple numbers separated by comma"
+        " (e.g. 1,3,4) to aggregate demonstrations."
     )
 
     while True:
         raw_choice = input(
-            f"Seleziona file (1-{len(sorted_files)}) [default: 1]: "
+            f"Select file (1-{len(sorted_files)}) [default: 1]: "
         ).strip()
         if not raw_choice:
             raw_choice = "1"
@@ -622,8 +622,8 @@ def select_demonstration_files(demo_files):
                     raise ValueError
         except ValueError:
             print(
-                f"⚠ Input non valido! Inserisci numeri tra 1 e {len(sorted_files)}"
-                " separati da virgola."
+                f"⚠ Invalid input! Enter numbers between 1 and {len(sorted_files)}"
+                " separated by comma."
             )
             continue
 
@@ -635,14 +635,14 @@ def select_demonstration_files(demo_files):
                 seen.add(idx)
 
         if not unique_indices:
-            print("⚠ Nessun indice valido rilevato, riprova.")
+            print("⚠ No valid index detected, try again.")
             continue
 
         selected = [sorted_files[idx] for idx in unique_indices]
         if len(selected) == 1:
-            print(f"Userai il file: {selected[0]}\n")
+            print(f"You will use the file: {selected[0]}\n")
         else:
-            print("Userai i file:")
+            print("You will use the files:")
             for path in selected:
                 print(f"  - {path}")
             print()
@@ -658,24 +658,24 @@ def train_bc_model(
     model_type=DEFAULT_MODEL_TYPE,
     frame_mode: str = "single",
 ):
-    """Funzione principale per addestrare il modello BC.
+    """Main function to train the BC model.
 
     Args:
-        demonstrations_files: lista di percorsi ai file di dimostrazioni
-        num_epochs: numero di epoche di training
-        batch_size: dimensione batch per i DataLoader
-        val_split: frazione dedicata alla validation
-        device: dispositivo su cui addestrare
-        model_type: chiave nel MODEL_REGISTRY
-        frame_mode: "single" (3 canali) oppure "stacked" (due frame concatenati)
+        demonstrations_files: list of paths to demonstration files
+        num_epochs: number of training epochs
+        batch_size: batch size for DataLoaders
+        val_split: fraction dedicated to validation
+        device: device to train on
+        model_type: key in MODEL_REGISTRY
+        frame_mode: "single" (3 channels) or "stacked" (two concatenated frames)
     """
-    print("Caricamento dimostrazioni da:")
+    print("Loading demonstrations from:")
     demonstrations = []
     for demo_file in demonstrations_files:
         print(f"  - {demo_file}")
         demonstrations.extend(load_demonstrations(demo_file))
 
-    # Crea dataset
+    # Create dataset
     full_dataset = BCDataset(demonstrations, frame_mode=frame_mode)
 
     # Split train/validation
@@ -687,11 +687,11 @@ def train_bc_model(
 
     print(f"Training samples: {train_size}, Validation samples: {val_size}")
 
-    # Crea dataloaders
+    # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-    # Crea modello e trainer
+    # Create model and trainer
     input_channels = 6 if frame_mode == "stacked" else 3
     policy = build_policy(model_type=model_type, num_actions=6, in_channels=input_channels)
     if device is None:
@@ -721,30 +721,30 @@ def train_bc_model(
         }
     )
 
-    # Addestra (il trainer salverà il modello finale automaticamente)
+    # Train (the trainer will save the final model automatically)
     trainer.train(train_loader, val_loader, num_epochs=num_epochs)
 
     return trainer.policy
 
 
 def main(selected_model_type=None):
-    """Funzione principale."""
-    # Trova file di dimostrazioni più recente
+    """Main function."""
+    # Find most recent demonstration file
     demo_dir = Path("data/demonstrations")
     if not demo_dir.exists():
-        print("Errore: Directory 'data/demonstrations' non trovata!")
-        print("Esegui prima 'collect_demonstrations.py' per raccogliere dati.")
+        print("Error: Directory 'data/demonstrations' not found!")
+        print("Run 'collect_demonstrations.py' first to collect data.")
         return
 
     demo_files = list(demo_dir.glob("dem_*.pkl"))
     if not demo_files:
-        print("Errore: Nessun file di dimostrazioni trovato!")
-        print("Esegui prima 'collect_demonstrations.py' per raccogliere dati.")
+        print("Error: No demonstration files found!")
+        print("Run 'collect_demonstrations.py' first to collect data.")
         return
 
-    # Permetti all'utente di scegliere uno o più file da usare (default: più recente)
+    # Allow user to choose one or more files to use (default: most recent)
     selected_demo_files = select_demonstration_files(demo_files)
-    print("Userai le seguenti dimostrazioni:")
+    print("You will use the following demonstrations:")
     for path in selected_demo_files:
         print(f"  - {path}")
     print()
@@ -752,14 +752,14 @@ def main(selected_model_type=None):
     model_type = selected_model_type or prompt_model_type()
     frame_mode = prompt_frame_mode()
 
-    # Parametri training
-    num_epochs = int(input("Numero di epochs [default: 50]: ") or "50")
+    # Training parameters
+    num_epochs = int(input("Number of epochs [default: 50]: ") or "50")
     batch_size = int(input("Batch size [default: 32]: ") or "32")
     
-    # Selezione dispositivo
+    # Device selection
     device = select_device()
 
-    # Addestra modello
+    # Train model
     train_bc_model(
         selected_demo_files,
         num_epochs=num_epochs,
@@ -769,8 +769,7 @@ def main(selected_model_type=None):
         frame_mode=frame_mode,
     )
 
-    print("\nTraining completato! Usa 'evaluate_bc.py' per testare il modello.")
-
+    print("\nTraining completed! Use 'evaluate_bc.py' to test the model.")
 
 if __name__ == "__main__":
     main()

@@ -1,27 +1,26 @@
 """
-Data Manager - Gestisce il salvataggio di tutti i dati del progetto.
-Centralizza la logica di salvataggio per dimostrazioni, modelli e plot.
+Data Manager - Manages the saving of all project data.
+Centralizes saving logic for demonstrations, models and plots.
 """
 import pickle
 import torch
 from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
-import numpy as np
 import random
 import string
 import csv
 
 
 class DataManager:
-    """Classe per gestire il salvataggio dei dati del progetto."""
+    """Class to manage project data saving."""
     
     def __init__(self, base_dir='data'):
         """
-        Inizializza il DataManager.
+        Initializes the DataManager.
         
         Args:
-            base_dir: Directory base per tutti i dati (default: 'data')
+            base_dir: Base directory for all data (default: 'data')
         """
         self.base_dir = Path(base_dir)
         self.demonstrations_dir = self.base_dir / 'demonstrations'
@@ -29,60 +28,60 @@ class DataManager:
         self.plots_dir = self.base_dir / 'plots'
         self.metrics_dir = self.base_dir / 'metrics'
         
-        # Crea le directory se non esistono
+        # Create directories if they don't exist
         self._create_directories()
     
     def _generate_unique_id(self, length=5):
         """
-        Genera un ID alfanumerico univoco.
+        Generates a unique alphanumeric ID.
         
         Args:
-            length: Lunghezza dell'ID (default: 5)
+            length: Length of the ID (default: 5)
         
         Returns:
-            str: ID alfanumerico univoco
+            str: Unique alphanumeric ID
         """
-        # Caratteri disponibili: lettere maiuscole e minuscole + numeri
+        # Available characters: uppercase and lowercase letters + numbers
         characters = string.ascii_letters + string.digits
         
-        # Genera ID finché non ne trova uno univoco
+        # Generate ID until a unique one is found
         max_attempts = 1000
         for _ in range(max_attempts):
             new_id = ''.join(random.choices(characters, k=length))
             
-            # Verifica che non esista già in nessuna directory
+            # Verify that it doesn't already exist in any directory
             if not self._id_exists(new_id):
                 return new_id
         
-        # Se dopo molti tentativi non trova un ID univoco, aumenta la lunghezza
+        # If after many attempts no unique ID is found, increase the length
         return self._generate_unique_id(length + 1)
     
     def _id_exists(self, id_str):
         """
-        Verifica se un ID esiste già in uno dei file salvati.
+        Checks if an ID already exists in one of the saved files.
         
         Args:
-            id_str: ID da verificare
+            id_str: ID to verify
         
         Returns:
-            bool: True se l'ID esiste già, False altrimenti
+            bool: True if the ID already exists, False otherwise
         """
-        # Cerca in dimostrazioni
+        # Search in demonstrations
         for file in self.demonstrations_dir.glob('dem_*_*_*.pkl'):
             if id_str in file.stem:
                 return True
         
-        # Cerca in modelli
+        # Search in models
         for file in self.models_dir.glob('mod_*_*_*.pth'):
             if id_str in file.stem:
                 return True
         
-        # Cerca in plot
+        # Search in plots
         for file in self.plots_dir.glob('plot_*_*_*.png'):
             if id_str in file.stem:
                 return True
         
-        # Cerca in CSV di metriche
+        # Search in metrics CSV
         for file in self.metrics_dir.glob('metrics_*.csv'):
             if id_str in file.stem:
                 return True
@@ -90,18 +89,18 @@ class DataManager:
         return False
 
     def create_run_identifier(self):
-        """Genera timestamp e ID per una nuova esecuzione."""
+        """Generates timestamp and ID for a new run."""
         timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
         run_id = self._generate_unique_id()
         return timestamp, run_id
 
     def get_metrics_filepath(self, run_timestamp, run_id):
-        """Costruisce il percorso del CSV di metriche per il run specificato."""
+        """Constructs the path of the metrics CSV for the specified run."""
         filename = f"metrics_{run_timestamp}_{run_id}.csv"
         return self.metrics_dir / filename
 
     def _ensure_metrics_header(self, filepath):
-        """Garantisce la presenza dell'header nel file CSV."""
+        """Ensures the presence of the header in the CSV file."""
         filepath.parent.mkdir(parents=True, exist_ok=True)
         if filepath.exists() and filepath.stat().st_size > 0:
             return
@@ -110,7 +109,7 @@ class DataManager:
             writer.writerow(["Section", "Name", "Value", "Extra1", "Extra2", "Extra3", "Extra4"])
 
     def save_training_csv(self, run_timestamp, run_id, metadata, epoch_metrics, target_path=None):
-        """Salva su CSV i metadati della run e le metriche per-epoch."""
+        """Saves run metadata and per-epoch metrics to CSV."""
         filepath = Path(target_path) if target_path else self.get_metrics_filepath(run_timestamp, run_id)
         self._ensure_metrics_header(filepath)
         with open(filepath, 'a', newline='', encoding='utf-8') as csv_file:
@@ -132,7 +131,7 @@ class DataManager:
         return filepath
 
     def save_gail_metrics_csv(self, run_timestamp, run_id, metadata, iteration_metrics, target_path=None):
-        """Salva CSV con metadati e metriche per-iterazione del training GAIL."""
+        """Saves CSV with metadata and per-iteration metrics from GAIL training."""
         filepath = Path(target_path) if target_path else self.get_metrics_filepath(run_timestamp, run_id)
         self._ensure_metrics_header(filepath)
         with open(filepath, 'a', newline='', encoding='utf-8') as csv_file:
@@ -181,7 +180,7 @@ class DataManager:
         return filepath
 
     def append_evaluation_results(self, csv_path, evaluation_summary, episode_metrics, metadata=None):
-        """Aggiunge i risultati della valutazione al CSV esistente."""
+        """Appends evaluation results to the existing CSV."""
         csv_path = Path(csv_path)
         self._ensure_metrics_header(csv_path)
         with open(csv_path, 'a', newline='', encoding='utf-8') as csv_file:
@@ -207,7 +206,7 @@ class DataManager:
         return csv_path
     
     def _create_directories(self):
-        """Crea tutte le directory necessarie."""
+        """Creates all necessary directories."""
         self.demonstrations_dir.mkdir(parents=True, exist_ok=True)
         self.models_dir.mkdir(parents=True, exist_ok=True)
         self.plots_dir.mkdir(parents=True, exist_ok=True)
@@ -215,22 +214,22 @@ class DataManager:
     
     def save_demonstrations(self, demonstrations, filename=None, source='manual', custom_id=None):
         """
-        Salva le dimostrazioni su file.
+        Saves demonstrations to file.
         
         Args:
-            demonstrations: Lista di episodi con observations, actions, rewards, dones
-            filename: Nome file personalizzato (opzionale)
-            source: Sorgente dei dati (default: 'manual', può essere 'minari:dataset_name')
-            custom_id: ID personalizzato (opzionale, altrimenti generato automaticamente)
+            demonstrations: List of episodes with observations, actions, rewards, dones
+            filename: Custom filename (optional)
+            source: Data source (default: 'manual', can be 'minari:dataset_name')
+            custom_id: Custom ID (optional, otherwise automatically generated)
         
         Returns:
-            tuple: (Path del file salvato, ID generato)
+            tuple: (Path of saved file, generated ID)
         """
         if not demonstrations:
-            print("Nessuna dimostrazione da salvare!")
+            print("No demonstrations to save!")
             return None, None
         
-        # Nome file: dem_YYMMDD_hhmmss_id.pkl (id alfanumerico 5 caratteri)
+        # Filename: dem_YYMMDD_hhmmss_id.pkl (5-character alphanumeric id)
         if filename is None:
             timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
             if custom_id is None:
@@ -244,7 +243,7 @@ class DataManager:
         
         filepath = self.demonstrations_dir / filename
         
-        # Prepara i dati da salvare
+        # Prepare data to save
         data = {
             'demonstrations': demonstrations,
             'num_episodes': len(demonstrations),
@@ -253,38 +252,38 @@ class DataManager:
             'source': source
         }
         
-        # Salva i dati
+        # Save data
         with open(filepath, 'wb') as f:
             pickle.dump(data, f)
         
-        print(f"\n✓ Dimostrazioni salvate in: {filepath}")
-        print(f"  Episodi: {data['num_episodes']}")
-        print(f"  Steps totali: {data['total_steps']}")
-        print(f"  Sorgente: {source}")
+        print(f"\n✓ Demonstrations saved in: {filepath}")
+        print(f"  Episodes: {data['num_episodes']}")
+        print(f"  Total steps: {data['total_steps']}")
+        print(f"  Source: {source}")
         
         return filepath, demo_id
     
     def load_demonstrations(self, filepath):
         """
-        Carica dimostrazioni da file.
+        Loads demonstrations from file.
         
         Args:
-            filepath: Percorso del file da caricare
+            filepath: Path to the file to load
         
         Returns:
-            list: Lista di dimostrazioni
+            list: List of demonstrations
         """
         filepath = Path(filepath)
         if not filepath.exists():
-            raise FileNotFoundError(f"File non trovato: {filepath}")
+            raise FileNotFoundError(f"File not found: {filepath}")
         
         with open(filepath, 'rb') as f:
             data = pickle.load(f)
         
-        print(f"\n✓ Dimostrazioni caricate da: {filepath}")
-        print(f"  Episodi: {data.get('num_episodes', 'N/A')}")
-        print(f"  Steps totali: {data.get('total_steps', 'N/A')}")
-        print(f"  Sorgente: {data.get('source', 'N/A')}")
+        print(f"\n✓ Demonstrations loaded from: {filepath}")
+        print(f"  Episodes: {data.get('num_episodes', 'N/A')}")
+        print(f"  Total steps: {data.get('total_steps', 'N/A')}")
+        print(f"  Source: {data.get('source', 'N/A')}")
         
         return data['demonstrations']
     
@@ -294,23 +293,23 @@ class DataManager:
                    filename=None, custom_id=None, custom_timestamp=None,
                    metadata=None):
         """
-        Salva un modello PyTorch.
+        Saves a PyTorch model.
         
         Args:
-            model_state_dict: State dict del modello
-            optimizer_state_dict: State dict dell'optimizer (opzionale)
-            train_losses: Lista di loss durante training (opzionale)
-            val_losses: Lista di loss durante validazione (opzionale)
-            train_accuracies: Lista di accuracy durante training (opzionale)
-            val_accuracies: Lista di accuracy durante validazione (opzionale)
-            filename: Nome file personalizzato (opzionale, se specificato ignora timestamp e id)
-            custom_id: ID personalizzato (opzionale)
-            custom_timestamp: Timestamp personalizzato in formato yymmdd_HHMMSS (opzionale)
+            model_state_dict: Model state dict
+            optimizer_state_dict: Optimizer state dict (optional)
+            train_losses: List of losses during training (optional)
+            val_losses: List of losses during validation (optional)
+            train_accuracies: List of accuracies during training (optional)
+            val_accuracies: List of accuracies during validation (optional)
+            filename: Custom filename (optional, if specified ignores timestamp and id)
+            custom_id: Custom ID (optional)
+            custom_timestamp: Custom timestamp in yymmdd_HHMMSS format (optional)
         
         Returns:
-            tuple: (Path del file salvato, timestamp, ID)
+            tuple: (Path of saved file, timestamp, ID)
         """
-        # Nome file: mod_YYMMDD_hhmmss_id.pth (id alfanumerico 5 caratteri)
+        # Filename: mod_YYMMDD_hhmmss_id.pth (5-character alphanumeric id)
         if filename is None:
             if custom_timestamp is None:
                 timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
@@ -324,19 +323,19 @@ class DataManager:
             
             filename = f"mod_{timestamp}_{model_id}.pth"
         else:
-            # Se filename è specificato, estrai timestamp e id se possibile
+            # If filename is specified, extract timestamp and id if possible
             timestamp = None
             model_id = None
         
         filepath = self.models_dir / filename
         
-        # Prepara i dati da salvare
+        # Prepare data to save
         checkpoint = {
             'model_state_dict': model_state_dict,
             'timestamp': datetime.now().isoformat()
         }
         
-        # Aggiungi dati opzionali se forniti
+        # Add optional data if provided
         if optimizer_state_dict is not None:
             checkpoint['optimizer_state_dict'] = optimizer_state_dict
         if train_losses is not None:
@@ -353,12 +352,12 @@ class DataManager:
             checkpoint['run_timestamp'] = metadata.get('run_timestamp')
             checkpoint['metrics_csv_path'] = metadata.get('metrics_csv_path')
         
-        # Salva il modello
+        # Save the model
         torch.save(checkpoint, filepath)
         
-        print(f"\n✓ Modello salvato in: {filepath}")
+        print(f"\n✓ Model saved in: {filepath}")
         
-        # Restituisci anche timestamp e id per sincronizzare con i plot
+        # Also return timestamp and id for synchronization with plots
         if filename is None or (timestamp is not None and model_id is not None):
             return filepath, timestamp, model_id
         else:
@@ -366,22 +365,22 @@ class DataManager:
     
     def load_model(self, filepath, device='cpu'):
         """
-        Carica un modello PyTorch.
+        Loads a PyTorch model.
         
         Args:
-            filepath: Percorso del file da caricare
-            device: Device su cui caricare il modello (default: 'cpu')
+            filepath: Path to the file to load
+            device: Device to load the model on (default: 'cpu')
         
         Returns:
-            dict: Checkpoint contenente model_state_dict e altri dati
+            dict: Checkpoint containing model_state_dict and other data
         """
         filepath = Path(filepath)
         if not filepath.exists():
-            raise FileNotFoundError(f"File non trovato: {filepath}")
+            raise FileNotFoundError(f"File not found: {filepath}")
         
         checkpoint = torch.load(filepath, map_location=device)
         
-        print(f"\n✓ Modello caricato da: {filepath}")
+        print(f"\n✓ Model loaded from: {filepath}")
         
         return checkpoint
     
@@ -390,21 +389,21 @@ class DataManager:
                           filename=None, model_timestamp=None, model_id=None,
                           metadata=None):
         """
-        Salva un plot della storia del training.
+        Saves a plot of training history.
         
         Args:
-            train_losses: Lista di loss durante training
-            val_losses: Lista di loss durante validazione
-            train_accuracies: Lista di accuracy durante training
-            val_accuracies: Lista di accuracy durante validazione
-            filename: Nome file personalizzato (opzionale)
-            model_timestamp: Timestamp del modello associato (per sincronizzazione)
-            model_id: ID del modello associato (per sincronizzazione)
+            train_losses: List of losses during training
+            val_losses: List of losses during validation
+            train_accuracies: List of accuracies during training
+            val_accuracies: List of accuracies during validation
+            filename: Custom filename (optional)
+            model_timestamp: Timestamp of the associated model (for synchronization)
+            model_id: ID of the associated model (for synchronization)
         
         Returns:
-            Path: Percorso del file salvato
+            Path: Path of the saved file
         """
-        # Crea il plot
+        # Create the plot
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
         
         # Loss
@@ -425,19 +424,19 @@ class DataManager:
         ax2.legend()
         ax2.grid(True)
         
-        # Titolo descrittivo con modello, dataset, epochs e batch
+        # Descriptive title with model, dataset, epochs and batch
         title = self._build_plot_title(metadata, len(train_losses))
         fig.suptitle(title, fontsize=12)
         fig.tight_layout(rect=[0, 0, 1, 0.94])
         
-        # Nome file: plot_YYMMDD_hhmmss_id.png (id alfanumerico, sincronizzato con modello)
+        # Filename: plot_YYMMDD_hhmmss_id.png (alphanumeric id, synchronized with model)
         if filename is None:
             if model_timestamp is not None and model_id is not None:
-                # Usa timestamp e id del modello per sincronizzazione
+                # Use model timestamp and id for synchronization
                 timestamp = model_timestamp
                 plot_id = model_id
             else:
-                # Genera nuovi timestamp e id
+                # Generate new timestamp and id
                 timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
                 plot_id = self._generate_unique_id()
             
@@ -445,23 +444,23 @@ class DataManager:
         
         filepath = self.plots_dir / filename
         
-        # Salva il plot in PNG
+        # Save the plot as PNG
         plt.savefig(filepath)
-        print(f"\n✓ Plot salvato in: {filepath}")
+        print(f"\n✓ Plot saved in: {filepath}")
 
-        # Salva anche la figura intera (pickle .fig) per editing futuro
+        # Also save the entire figure (pickle .fig) for future editing
         figure_path = filepath.with_suffix('.fig')
         with open(figure_path, 'wb') as fig_file:
             pickle.dump(fig, fig_file)
-        print(f"✓ Figura salvata in: {figure_path}")
+        print(f"✓ Figure saved in: {figure_path}")
         
-        # Mostra il plot
+        # Show the plot
         plt.show()
         
         return filepath
 
     def _build_plot_title(self, metadata, observed_epochs):
-        """Costruisce il titolo del plot con dettagli della run."""
+        """Constructs the plot title with run details."""
         metadata = metadata or {}
 
         model_name = metadata.get('model_label') or metadata.get('model_type') or 'Unknown model'
@@ -505,10 +504,10 @@ class DataManager:
     
     def get_latest_demonstrations(self):
         """
-        Trova il file di dimostrazioni più recente.
+        Finds the most recent demonstrations file.
         
         Returns:
-            Path o None: Percorso del file più recente, o None se non trovato
+            Path or None: Path to the most recent file, or None if not found
         """
         demo_files = list(self.demonstrations_dir.glob('demonstrations_*.pkl'))
         if not demo_files:
@@ -517,10 +516,10 @@ class DataManager:
     
     def get_latest_model(self):
         """
-        Trova il file di modello più recente.
+        Finds the most recent model file.
         
         Returns:
-            Path o None: Percorso del file più recente, o None se non trovato
+            Path or None: Path to the most recent file, or None if not found
         """
         model_files = list(self.models_dir.glob('*.pth'))
         if not model_files:
@@ -529,24 +528,24 @@ class DataManager:
     
     def list_demonstrations(self):
         """
-        Lista tutti i file di dimostrazioni disponibili.
+        Lists all available demonstration files.
         
         Returns:
-            list: Lista di Path ai file di dimostrazioni
+            list: List of Paths to demonstration files
         """
-        # Supporta sia il nuovo formato (dem_*) che il vecchio (demonstrations_*)
+        # Supports both new format (dem_*) and old format (demonstrations_*)
         new_format = list(self.demonstrations_dir.glob('dem_*.pkl'))
         old_format = list(self.demonstrations_dir.glob('demonstrations_*.pkl'))
         return sorted(new_format + old_format)
     
     def list_models(self):
         """
-        Lista tutti i modelli disponibili.
+        Lists all available models.
         
         Returns:
-            list: Lista di Path ai file dei modelli
+            list: List of Paths to model files
         """
-        # Supporta sia il nuovo formato (mod_*) che i vecchi formati
+        # Supports both new format (mod_*) and old formats
         new_format = list(self.models_dir.glob('mod_*.pth'))
         old_format = list(self.models_dir.glob('bc_model_*.pth'))
         special_files = list(self.models_dir.glob('best_model.pth'))
@@ -554,29 +553,29 @@ class DataManager:
     
     def list_plots(self):
         """
-        Lista tutti i plot disponibili.
+        Lists all available plots.
         
         Returns:
-            list: Lista di Path ai file dei plot
+            list: List of Paths to plot files
         """
-        # Supporta sia il nuovo formato (plot_*) che il vecchio (training_history_*)
+        # Supports both new format (plot_*) and old format (training_history_*)
         new_format = list(self.plots_dir.glob('plot_*.png'))
         old_format = list(self.plots_dir.glob('training_history_*.png'))
         return sorted(new_format + old_format)
     
     def get_demonstrations_info(self, filepath):
         """
-        Ottiene informazioni su un file di dimostrazioni senza caricarlo completamente.
+        Gets information about a demonstrations file without loading it completely.
         
         Args:
-            filepath: Percorso del file
+            filepath: Path to the file
         
         Returns:
-            dict: Informazioni sul file (num_episodes, total_steps, source, timestamp)
+            dict: Information about the file (num_episodes, total_steps, source, timestamp)
         """
         filepath = Path(filepath)
         if not filepath.exists():
-            raise FileNotFoundError(f"File non trovato: {filepath}")
+            raise FileNotFoundError(f"File not found: {filepath}")
         
         with open(filepath, 'rb') as f:
             data = pickle.load(f)
@@ -591,30 +590,30 @@ class DataManager:
     
     def merge_demonstrations(self, demo_filepaths, output_filename=None):
         """
-        Unisce più file di dimostrazioni in un unico file.
-        I file originali non vengono modificati o eliminati.
+        Merges multiple demonstration files into a single file.
+        Original files are not modified or deleted.
         
         Args:
-            demo_filepaths: Lista di percorsi ai file di dimostrazioni da unire
-            output_filename: Nome del file di output (opzionale, altrimenti generato automaticamente)
+            demo_filepaths: List of paths to demonstration files to merge
+            output_filename: Output filename (optional, otherwise automatically generated)
         
         Returns:
-            tuple: (Path del file unito, ID generato)
+            tuple: (Path of merged file, generated ID)
         """
         if not demo_filepaths:
-            print("Nessun file da unire!")
+            print("No files to merge!")
             return None, None
         
         all_demonstrations = []
         sources = []
         
-        print(f"\n📂 Unione di {len(demo_filepaths)} file di dimostrazioni...")
+        print(f"\n📂 Merging {len(demo_filepaths)} demonstration files...")
         
-        # Carica e combina tutte le dimostrazioni
+        # Load and combine all demonstrations
         for filepath in demo_filepaths:
             filepath = Path(filepath)
             if not filepath.exists():
-                print(f"⚠ File non trovato: {filepath} - Saltato")
+                print(f"⚠ File not found: {filepath} - Skipped")
                 continue
             
             with open(filepath, 'rb') as f:
@@ -628,25 +627,25 @@ class DataManager:
             all_demonstrations.extend(demonstrations)
             sources.append(source)
             
-            print(f"  ✓ Caricato {filepath.name}: {num_episodes} episodi, {total_steps} steps (source: {source})")
+            print(f"  ✓ Loaded {filepath.name}: {num_episodes} episodes, {total_steps} steps (source: {source})")
         
         if not all_demonstrations:
-            print("Nessuna dimostrazione valida trovata!")
+            print("No valid demonstrations found!")
             return None, None
         
-        # Crea la stringa source combinata
-        unique_sources = list(dict.fromkeys(sources))  # Rimuove duplicati mantenendo l'ordine
+        # Create combined source string
+        unique_sources = list(dict.fromkeys(sources))  # Remove duplicates while maintaining order
         combined_source = f"merged:{'+'.join(unique_sources)}"
         
-        # Salva il file unito
+        # Save the merged file
         merged_filepath, merged_id = self.save_demonstrations(
             demonstrations=all_demonstrations,
             filename=output_filename,
             source=combined_source
         )
         
-        print(f"\n✅ Unione completata!")
-        print(f"  File originali mantenuti: {len(demo_filepaths)}")
-        print(f"  Totale episodi uniti: {len(all_demonstrations)}")
+        print(f"\n✅ Merge completed!")
+        print(f"  Original files kept: {len(demo_filepaths)}")
+        print(f"  Total merged episodes: {len(all_demonstrations)}")
         
         return merged_filepath, merged_id

@@ -91,11 +91,30 @@ class GAILAgent:
         self.training_type = run_metadata.get("training_type", "bc")
 
         # Determina model_type e policy_output_type
-        self.model_type = (
-            run_metadata.get("model_type")
-            or checkpoint.get("model_type")
-            or DEFAULT_MODEL_TYPE
-        )
+        self.model_type = run_metadata.get("model_type") or checkpoint.get("model_type")
+
+        # Se model_type non è presente, chiedilo all'utente
+        if not self.model_type:
+            print("\n⚠ Model type non trovato nel checkpoint.")
+            print("Seleziona il tipo di architettura del modello:")
+            print("1. CNN (Convolutional Neural Network)")
+            print("2. MLP (Multi-Layer Perceptron)")
+            print("3. ViT (Vision Transformer)")
+            while True:
+                choice = input("Scelta [1-3, default: 1]: ").strip()
+                if not choice or choice == "1":
+                    self.model_type = "cnn"
+                    break
+                elif choice == "2":
+                    self.model_type = "mlp"
+                    break
+                elif choice == "3":
+                    self.model_type = "vit"
+                    break
+                else:
+                    print("Scelta non valida. Inserisci 1, 2 o 3.")
+            print(f"→ Model type impostato: {self.model_type}\n")
+
         self.policy_output_type = run_metadata.get("policy_output_type", "logits")
 
         # Determina frame mode

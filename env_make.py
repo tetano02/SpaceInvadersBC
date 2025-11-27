@@ -4,19 +4,19 @@ import ale_py
 
 def make_space_invaders_env(render_mode=None):
     """
-    Crea e restituisce l'ambiente Space Invaders di Atari.
-    
+    Creates and returns the Atari Space Invaders environment.
+
     Args:
-        render_mode (str, optional): Modalità di rendering. 
-                                     Opzioni: None, 'human', 'rgb_array'
-    
+        render_mode (str, optional): Rendering mode.
+                                     Options: None, 'human', 'rgb_array'
+
     Returns:
-        gym.Env: L'ambiente Space Invaders configurato
+        gym.Env: The configured Space Invaders environment
     """
-    # Registra i giochi Atari
+    # Register Atari games
     gym.register_envs(ale_py)
-    
-    # Crea l'ambiente Space Invaders
-    env = gym.make('ALE/SpaceInvaders-v5', render_mode=render_mode)
-    
+
+    # Create Space Invaders environment
+    env = gym.make("ALE/SpaceInvaders-v5", render_mode=render_mode)
+
     return env

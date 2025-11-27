@@ -1,4 +1,4 @@
-"""Analizza i file di dimostrazioni contando quante volte viene eseguita ogni azione."""
+"""Analyzes demonstration files by counting how many times each action is executed."""
 
 from __future__ import annotations
 
@@ -21,44 +21,17 @@ ACTION_NAMES = {
 }
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Conta la frequenza delle azioni presenti nelle dimostrazioni salvate",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--file", type=str, help="Percorso del file di dimostrazioni da analizzare"
-    )
-    parser.add_argument(
-        "--summary-only",
-        action="store_true",
-        help="Mostra solo il riepilogo aggregato (senza dettaglio per episodio)",
-    )
-    parser.add_argument(
-        "--csv",
-        type=str,
-        default=None,
-        help="Esporta le statistiche in formato CSV (specifica il percorso)",
-    )
-    parser.add_argument(
-        "--list",
-        action="store_true",
-        help="Mostra l'elenco dei file disponibili e termina",
-    )
-    return parser.parse_args()
-
-
 def prompt_for_demo_file(data_manager: DataManager) -> Path | None:
     files = data_manager.list_demonstrations()
     if not files:
-        print("\n⚠ Nessuna dimostrazione trovata in data/demonstrations")
+        print("\n⚠ No demonstrations found in data/demonstrations")
         return None
 
     if len(files) == 1:
-        print(f"\nAnalizzerò il file: {files[0]}")
+        print(f"\nI will analyze the file: {files[0]}")
         return files[0]
 
-    print("\nDimostrazioni disponibili:")
+    print("\nAvailable demonstrations:")
     for idx, file in enumerate(files, start=1):
         info = data_manager.get_demonstrations_info(file)
         print(
@@ -66,14 +39,14 @@ def prompt_for_demo_file(data_manager: DataManager) -> Path | None:
         )
 
     while True:
-        choice = input("Seleziona il numero del file da analizzare: ").strip()
+        choice = input("Select the file number to analyze: ").strip()
         if not choice.isdigit():
-            print("Inserisci un numero valido")
+            print("Enter a valid number")
             continue
         choice_idx = int(choice)
         if 1 <= choice_idx <= len(files):
             return files[choice_idx - 1]
-        print("Indice fuori range, riprova")
+        print("Index out of range, try again")
 
 
 def determine_action_dim(demonstrations: Iterable[dict]) -> int:
@@ -92,7 +65,7 @@ def action_label(action_id: int) -> str:
 
 def print_episode_stats(episode_idx: int, counts: np.ndarray, reward: float = 0.0):
     total = int(np.sum(counts))
-    print(f"\nEpisodio {episode_idx + 1}: {total} passi | Reward: {reward}")
+    print(f"\nEpisode {episode_idx + 1}: {total} steps | Reward: {reward}")
     for action_id, count in enumerate(counts):
         percentage = (count / total * 100) if total else 0.0
         print(
@@ -104,10 +77,10 @@ def print_global_stats(
     total_counts: np.ndarray, total_reward: float = 0.0, avg_reward: float = 0.0
 ):
     total_steps = int(np.sum(total_counts))
-    print("\n===== RIEPILOGO TOTALE =====")
-    print(f"Steps complessivi: {total_steps}")
-    print(f"Reward totale: {total_reward}")
-    print(f"Reward medio per episodio: {avg_reward:.2f}")
+    print("\n===== TOTAL SUMMARY =====")
+    print(f"Total steps: {total_steps}")
+    print(f"Total reward: {total_reward}")
+    print(f"Average reward per episode: {avg_reward:.2f}")
     for action_id, count in enumerate(total_counts):
         percentage = (count / total_steps * 100) if total_steps else 0.0
         print(
@@ -115,56 +88,22 @@ def print_global_stats(
         )
 
 
-def export_csv(path: Path, episode_counts: list[np.ndarray], total_counts: np.ndarray):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.writer(csv_file)
-        writer.writerow(["episode", "action_id", "action_name", "count", "percentage"])
-        for idx, counts in enumerate(episode_counts, start=1):
-            total = int(np.sum(counts)) or 1
-            for action_id, count in enumerate(counts):
-                percentage = count / total * 100
-                writer.writerow(
-                    [
-                        idx,
-                        action_id,
-                        action_label(action_id),
-                        count,
-                        f"{percentage:.4f}",
-                    ]
-                )
-        grand_total = int(np.sum(total_counts)) or 1
-        for action_id, count in enumerate(total_counts):
-            percentage = count / grand_total * 100
-            writer.writerow(
-                [
-                    "TOTAL",
-                    action_id,
-                    action_label(action_id),
-                    count,
-                    f"{percentage:.4f}",
-                ]
-            )
-    print(f"\n✓ Statistiche esportate in {path}")
-
-
 def analyze_demonstrations_file(
     filepath: Path,
     *,
     summary_only: bool = False,
-    csv_path: Path | None = None,
     data_manager: DataManager | None = None,
 ):
-    """Esegue l'analisi di un singolo file di dimostrazioni."""
+    """Performs analysis of a single demonstration file."""
     data_manager = data_manager or DataManager()
     filepath = Path(filepath)
     if not filepath.exists():
-        raise FileNotFoundError(f"File non trovato: {filepath}")
+        raise FileNotFoundError(f"File not found: {filepath}")
 
     demonstrations = data_manager.load_demonstrations(filepath)
-    print(f"\nAnalisi dimostrazioni da: {filepath}")
+    print(f"\nAnalyzing demonstrations from: {filepath}")
     num_episodes = len(demonstrations)
-    print(f"Episodi presenti: {num_episodes}")
+    print(f"Episodes present: {num_episodes}")
 
     action_dim = determine_action_dim(demonstrations)
     episode_counts: list[np.ndarray] = []
@@ -175,7 +114,7 @@ def analyze_demonstrations_file(
         counts = np.bincount(actions, minlength=action_dim)
         episode_counts.append(counts)
 
-        # Calcola il reward totale dell'episodio
+        # Calculate total reward for the episode
         rewards = episode.get("rewards", np.array([], dtype=np.float32))
         total_reward = float(np.sum(rewards))
         episode_rewards.append(total_reward)
@@ -190,9 +129,6 @@ def analyze_demonstrations_file(
 
     print_global_stats(total_counts, total_reward, avg_reward)
 
-    if csv_path:
-        export_csv(csv_path, episode_counts, total_counts)
-
     return {
         "episode_counts": episode_counts,
         "total_counts": total_counts,
@@ -202,39 +138,20 @@ def analyze_demonstrations_file(
 
 
 def main() -> int:
-    args = parse_args()
     data_manager = DataManager()
 
-    if args.list:
-        files = data_manager.list_demonstrations()
-        if not files:
-            print("\nNessuna dimostrazione trovata.")
-            return 0
-        print("\nFile disponibili:")
-        for file in files:
-            info = data_manager.get_demonstrations_info(file)
-            print(
-                f"- {file.name} | episodi: {info['num_episodes']} | steps: {info['total_steps']} | source: {info['source']}"
-            )
-        return 0
-
-    if args.file:
-        selected = Path(args.file)
-    else:
-        selected = prompt_for_demo_file(data_manager)
+    selected = prompt_for_demo_file(data_manager)
 
     if selected is None:
         return 1
 
     if not selected.exists():
-        print(f"\n⚠ File non trovato: {selected}")
+        print(f"\n⚠ File not found: {selected}")
         return 1
 
-    csv_path = Path(args.csv) if args.csv else None
     analyze_demonstrations_file(
         selected,
-        summary_only=args.summary_only,
-        csv_path=csv_path,
+        summary_only=False,
         data_manager=data_manager,
     )
 

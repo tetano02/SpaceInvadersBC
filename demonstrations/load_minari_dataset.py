@@ -1,11 +1,11 @@
 """
-Script per caricare e verificare dataset esperti da Minari.
+Script to load and verify expert datasets from Minari.
 """
 
 import os
 from pathlib import Path
 
-# Imposta un percorso di default locale per i dataset Minari dentro la repo.
+# Set a local default path for Minari datasets inside the repo.
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_MINARI_DIR = PROJECT_ROOT / "data" / "minari_datasets"
 if not os.environ.get("MINARI_DATASETS_PATH"):
@@ -18,20 +18,20 @@ from data_manager import DataManager
 
 
 def list_available_datasets():
-    """Elenca tutti i dataset disponibili in Minari."""
+    """Lists all available datasets in Minari."""
     print("\n" + "=" * 60)
-    print("DATASET MINARI DISPONIBILI")
+    print("AVAILABLE MINARI DATASETS")
     print("=" * 60)
 
     try:
-        # Lista tutti i dataset disponibili localmente
+        # List all locally available datasets
         local_datasets = minari.list_local_datasets()
-        print(f"\nDataset locali ({len(local_datasets)}):")
+        print(f"\nLocal datasets ({len(local_datasets)}):")
         for dataset_id in local_datasets:
             print(f"  - {dataset_id}")
 
-        # Lista dataset remoti disponibili per Space Invaders
-        print("\nDataset remoti disponibili per Atari/Space Invaders:")
+        # List remote datasets available for Space Invaders
+        print("\nRemote datasets available for Atari/Space Invaders:")
         remote_datasets = minari.list_remote_datasets()
         space_invaders_datasets = [
             d
@@ -43,10 +43,10 @@ def list_available_datasets():
             for dataset_id in space_invaders_datasets:
                 print(f"  - {dataset_id}")
         else:
-            print("  Nessun dataset specifico per Space Invaders trovato.")
-            print("\nDataset Atari generici:")
+            print("  No specific dataset for Space Invaders found.")
+            print("\nGeneric Atari datasets:")
             atari_datasets = [d for d in remote_datasets if "atari" in d.lower()]
-            for dataset_id in atari_datasets[:10]:  # Mostra primi 10
+            for dataset_id in atari_datasets[:10]:  # Show first 10
                 print(f"  - {dataset_id}")
 
         return local_datasets, (
@@ -54,79 +54,79 @@ def list_available_datasets():
         )
 
     except Exception as e:
-        print(f"Errore nel recupero dei dataset: {e}")
+        print(f"Error retrieving datasets: {e}")
         return [], []
 
 
 def check_dataset_info(dataset_id):
-    """Verifica informazioni su un dataset specifico."""
+    """Checks information about a specific dataset."""
     print(f"\n" + "=" * 60)
-    print(f"INFORMAZIONI DATASET: {dataset_id}")
+    print(f"DATASET INFORMATION: {dataset_id}")
     print("=" * 60)
 
     try:
-        # Prova a caricare il dataset
+        # Try to load the dataset
         dataset = minari.load_dataset(dataset_id)
 
         print(f"\nID: {dataset.id}")
-        print(f"Totale episodi: {dataset.total_episodes}")
-        print(f"Totale steps: {dataset.total_steps}")
+        print(f"Total episodes: {dataset.total_episodes}")
+        print(f"Total steps: {dataset.total_steps}")
 
-        # Informazioni sugli spazi
+        # Information about spaces
         print(f"\nObservation space: {dataset.observation_space}")
         print(f"Action space: {dataset.action_space}")
 
-        # Metadata se disponibili
+        # Metadata if available
         if hasattr(dataset, "spec") and dataset.spec:
             print(f"\nMetadata:")
             if hasattr(dataset.spec, "env_spec"):
                 print(f"  Environment: {dataset.spec.env_spec}")
 
-        # Statistiche su un episodio campione
-        print(f"\nCaricamento episodio campione...")
+        # Statistics on a sample episode
+        print(f"\nLoading sample episode...")
         episode_data = dataset[0]
 
-        # Accesso corretto ai dati dell'episodio
+        # Correct access to episode data
         observations = episode_data.observations
         actions = episode_data.actions
         rewards = episode_data.rewards
 
-        print(f"  Steps nell'episodio 0: {len(actions)}")
+        print(f"  Steps in episode 0: {len(actions)}")
         print(f"  Observation shape: {observations[0].shape}")
         print(
             f"  Actions shape: {actions.shape if hasattr(actions, 'shape') else len(actions)}"
         )
-        print(f"  Reward totale: {np.sum(rewards):.2f}")
+        print(f"  Total reward: {np.sum(rewards):.2f}")
 
         return dataset
 
     except Exception as e:
-        print(f"\n❌ Errore nel caricamento del dataset: {e}")
-        print(f"\nProva a scaricare il dataset con:")
+        print(f"\n❌ Error loading dataset: {e}")
+        print(f"\nTry downloading the dataset with:")
         print(f"  minari.download_dataset('{dataset_id}')")
         return None
 
 
 def download_dataset(dataset_id):
-    """Scarica un dataset da Minari."""
+    """Downloads a dataset from Minari."""
     print(f"\n" + "=" * 60)
-    print(f"DOWNLOAD DATASET: {dataset_id}")
+    print(f"DATASET DOWNLOAD: {dataset_id}")
     print("=" * 60)
 
     try:
-        print("\nDownload in corso...")
+        print("\nDownload in progress...")
         minari.download_dataset(dataset_id)
-        print(f"✓ Dataset '{dataset_id}' scaricato con successo!")
+        print(f"✓ Dataset '{dataset_id}' downloaded successfully!")
         return True
     except Exception as e:
-        print(f"❌ Errore durante il download: {e}")
+        print(f"❌ Error during download: {e}")
         return False
 
 
 def convert_minari_to_demonstrations(dataset, max_episodes=None):
-    """Converte dataset Minari nel formato usato per BC."""
+    """Converts Minari dataset to the format used for BC."""
     print(f"\n" + "=" * 60)
-    print("CONVERSIONE DATASET")
+    print("DATASET CONVERSION")
     print("=" * 60)
 
     demonstrations = []
@@ -136,35 +136,35 @@ def convert_minari_to_demonstrations(dataset, max_episodes=None):
         else min(max_episodes, dataset.total_episodes)
     )
 
-    print(f"\nConversione di {num_episodes} episodi...")
+    print(f"\nConverting {num_episodes} episodes...")
 
     for i in range(num_episodes):
         episode_data = dataset[i]
 
-        # Accesso corretto ai dati dell'episodio Minari
+        # Correct access to Minari episode data
         observations = episode_data.observations
         actions = episode_data.actions
         rewards = episode_data.rewards
 
-        # Converti nel formato BC
+        # Convert to BC format
         demo_episode = {
             "observations": np.array(observations, dtype=np.uint8),
             "actions": np.array(actions, dtype=np.int8),
             "rewards": np.array(rewards, dtype=np.float32),
             "dones": np.zeros(len(actions), dtype=np.bool_),
         }
-        # Marca l'ultimo step come done
+        # Mark the last step as done
         demo_episode["dones"][-1] = True
 
         demonstrations.append(demo_episode)
 
         if (i + 1) % 10 == 0:
-            print(f"  Convertiti {i + 1}/{num_episodes} episodi...")
+            print(f"  Converted {i + 1}/{num_episodes} episodes...")
 
-    print(f"\n✓ Conversione completata!")
-    print(f"  Episodi totali: {len(demonstrations)}")
+    print(f"\n✓ Conversion completed!")
+    print(f"  Total episodes: {len(demonstrations)}")
     total_steps = sum(len(ep["actions"]) for ep in demonstrations)
-    print(f"  Steps totali: {total_steps}")
+    print(f"  Total steps: {total_steps}")
 
     return demonstrations
 
@@ -172,7 +172,7 @@ def convert_minari_to_demonstrations(dataset, max_episodes=None):
 def save_demonstrations(
     demonstrations, dataset_name, source=None, custom_id=None, data_manager=None
 ):
-    """Salva le dimostrazioni convertite usando DataManager."""
+    """Saves converted demonstrations using DataManager."""
     data_manager = data_manager or DataManager()
     resolved_source = source or f"minari_{dataset_name}"
     return data_manager.save_demonstrations(
@@ -184,21 +184,21 @@ def save_demonstrations(
 
 
 def demonstration_exists(custom_id, data_manager=None):
-    """Verifica se esistono già dimostrazioni salvate con l'ID specificato."""
+    """Checks if demonstrations with the specified ID already exist."""
     data_manager = data_manager or DataManager()
     pattern = f"dem_*_{custom_id}.pkl"
     existing_files = sorted(data_manager.demonstrations_dir.glob(pattern))
     if existing_files:
-        print(f"\n⚠ Dimostrazioni con ID '{custom_id}' già presenti:")
+        print(f"\n⚠ Demonstrations with ID '{custom_id}' already present:")
         for file in existing_files:
             print(f"  - {file}")
     return existing_files
 
 
 def main():
-    """Funzione principale."""
+    """Main function."""
     print("\n" + "=" * 60)
-    print("CARICAMENTO DATASET MINARI PER BEHAVIORAL CLONING")
+    print("LOADING MINARI DATASET FOR BEHAVIORAL CLONING")
     print("=" * 60)
 
     dataset_id = "atari/spaceinvaders/expert-v0"
@@ -208,21 +208,21 @@ def main():
     local_datasets, _ = list_available_datasets()
 
     if dataset_id not in local_datasets:
-        print(f"\n⚠ Dataset non trovato localmente. Avvio download automatico...")
+        print(f"\n⚠ Dataset not found locally. Starting automatic download...")
         if not download_dataset(dataset_id):
-            print("\n❌ Impossibile completare il flusso senza il dataset richiesto.")
+            print("\n❌ Unable to complete the flow without the required dataset.")
             return
     else:
-        print("\n✓ Dataset già disponibile localmente.")
+        print("\n✓ Dataset already available locally.")
 
     data_manager = DataManager()
     if demonstration_exists("minari", data_manager=data_manager):
-        print("\n✓ Dimostrazioni già convertite. Salto la riconversione.")
+        print("\n✓ Demonstrations already converted. Skipping reconversion.")
         return
 
     dataset = check_dataset_info(dataset_id)
     if dataset is None:
-        print("\n❌ Impossibile convertire il dataset.")
+        print("\n❌ Unable to convert the dataset.")
         return
 
     demonstrations = convert_minari_to_demonstrations(dataset)
@@ -235,8 +235,8 @@ def main():
     )
 
     if save_path:
-        print(f"\n✓ Dimostrazioni salvate in: {save_path}")
-    print("\nOperazione completata! Puoi ora usare questi dati per il training.")
+        print(f"\n✓ Demonstrations saved in: {save_path}")
+    print("\nOperation completed! You can now use this data for training.")
 
 
 if __name__ == "__main__":
