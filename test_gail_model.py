@@ -1,5 +1,5 @@
 """
-Script per valutare i modelli GAIL usando la stessa logica del training.
+Script to evaluate GAIL models using the same logic as training.
 """
 
 import torch
@@ -18,7 +18,7 @@ from gail.gail_trainer import (
 
 
 def _format_model_entry(model_path: Path, index: int) -> str:
-    """Restituisce una stringa leggibile con info sul modello."""
+    """Returns a readable string with model information."""
     try:
         modified = datetime.fromtimestamp(model_path.stat().st_mtime)
         modified_str = modified.strftime("%Y-%m-%d %H:%M:%S")
@@ -26,48 +26,46 @@ def _format_model_entry(model_path: Path, index: int) -> str:
         modified_str = "N/A"
     tag = "BEST" if model_path.name == "best_model_temp.pth" else ""
     tag_display = f" [{tag}]" if tag else ""
-    return f"{index}. {model_path.name}{tag_display} (ultimo update: {modified_str})"
+    return f"{index}. {model_path.name}{tag_display} (last update: {modified_str})"
 
 
 def select_model_file(
     data_manager: DataManager, preselected_index: Optional[int] = None
 ) -> Optional[Path]:
-    """Permette all'utente di scegliere un modello disponibile in data/models."""
+    """Allows the user to choose an available model in data/models."""
     models = data_manager.list_models()
     if not models:
-        print(
-            "Errore: Nessun modello trovato in data/models. Esegui prima l'addestramento."
-        )
+        print("Error: No models found in data/models. Run training first.")
         return None
-    print("\n=== MODELLI DISPONIBILI ===")
+    print("\n=== AVAILABLE MODELS ===")
     for idx, model_path in enumerate(models, start=1):
         print(_format_model_entry(model_path, idx))
-    print("Digita il numero del modello da valutare oppure 'q' per uscire. [ENTER = 1]")
+    print("Enter the model number to evaluate or 'q' to exit. [ENTER = 1]")
     while True:
         if preselected_index is not None:
             user_input = str(preselected_index)
             preselected_index = None
-            print(f"Selezione automatica: {user_input}")
+            print(f"Automatic selection: {user_input}")
         else:
-            user_input = input("Modello: ").strip()
+            user_input = input("Model: ").strip()
         if user_input.lower() in {"q", "quit", "exit"}:
             return None
         if user_input == "":
             selection = 1
         else:
             if not user_input.isdigit():
-                print("Inserisci un numero valido o 'q' per uscire.")
+                print("Enter a valid number or 'q' to exit.")
                 continue
             selection = int(user_input)
         if 1 <= selection <= len(models):
             chosen = models[selection - 1]
-            print(f"\n→ Modello selezionato: {chosen.name}")
+            print(f"\n→ Model selected: {chosen.name}")
             return chosen
-        print(f"Selezione fuori range (1-{len(models)}). Riprova.")
+        print(f"Selection out of range (1-{len(models)}). Try again.")
 
 
 class GAILAgent:
-    """Agente che usa la policy GAIL per giocare, usando la stessa logica del training."""
+    """Agent that uses GAIL policy to play, using the same logic as training."""
 
     def __init__(
         self, model_path, device="cuda" if torch.cuda.is_available() else "cpu"
@@ -76,7 +74,7 @@ class GAILAgent:
         self.data_manager = DataManager()
         self.model_path = Path(model_path)
 
-        # Carica modello
+        # Load model
         checkpoint = torch.load(model_path, map_location=device)
         run_metadata = checkpoint.get("run_metadata") or {}
         self.run_id = checkpoint.get("run_id") or run_metadata.get("run_id")
@@ -87,21 +85,21 @@ class GAILAgent:
             "metrics_csv_path"
         )
 
-        # Determina tipo di training (BC o GAIL)
+        # Determine training type (BC or GAIL)
         self.training_type = run_metadata.get("training_type", "bc")
 
-        # Determina model_type e policy_output_type
+        # Determine model_type and policy_output_type
         self.model_type = run_metadata.get("model_type") or checkpoint.get("model_type")
 
-        # Se model_type non è presente, chiedilo all'utente
+        # If model_type is not present, ask the user
         if not self.model_type:
-            print("\n⚠ Model type non trovato nel checkpoint.")
-            print("Seleziona il tipo di architettura del modello:")
+            print("\n⚠ Model type not found in checkpoint.")
+            print("Select the model architecture type:")
             print("1. CNN (Convolutional Neural Network)")
             print("2. MLP (Multi-Layer Perceptron)")
             print("3. ViT (Vision Transformer)")
             while True:
-                choice = input("Scelta [1-3, default: 1]: ").strip()
+                choice = input("Choice [1-3, default: 1]: ").strip()
                 if not choice or choice == "1":
                     self.model_type = "cnn"
                     break
@@ -112,24 +110,24 @@ class GAILAgent:
                     self.model_type = "vit"
                     break
                 else:
-                    print("Scelta non valida. Inserisci 1, 2 o 3.")
-            print(f"→ Model type impostato: {self.model_type}\n")
+                    print("Invalid choice. Enter 1, 2 or 3.")
+            print(f"→ Model type set: {self.model_type}\n")
 
         self.policy_output_type = run_metadata.get("policy_output_type", "logits")
 
-        # Determina frame mode
+        # Determine frame mode
         self.frame_mode = self._determine_frame_mode(run_metadata, checkpoint)
         stack_size = 2 if self.frame_mode == "stacked" else 1
         input_channels = 3 if self.frame_mode == "single" else 6
 
-        # Costruisci policy
+        # Build policy
         self.policy = build_policy(
             self.model_type, num_actions=6, in_channels=input_channels
         ).to(device)
         self.policy.load_state_dict(checkpoint["model_state_dict"])
         self.policy.eval()
 
-        # Setup preprocessor (come in GAIL training)
+        # Setup preprocessor (as in GAIL training)
         self.preprocessor = FrameStackPreprocessor(stack_size=stack_size)
 
         # Metadata CSV
@@ -147,7 +145,7 @@ class GAILAgent:
                     self.data_manager.get_metrics_filepath(ts, rid)
                 )
 
-        print(f"Modello caricato da: {model_path}")
+        print(f"Model loaded from: {model_path}")
         print(f"Device: {device}")
         print(f"Training type: {self.training_type}")
         print(f"Model type: {self.model_type}")
@@ -156,7 +154,7 @@ class GAILAgent:
 
     @staticmethod
     def _infer_run_info_from_filename(model_path: Path):
-        """Prova a inferire timestamp e id dal nome file del modello."""
+        """Tries to infer timestamp and id from model filename."""
         stem = model_path.stem
         parts = stem.split("_")
         if len(parts) >= 3 and parts[0] == "mod":
@@ -168,19 +166,19 @@ class GAILAgent:
 
     @staticmethod
     def _determine_frame_mode(run_metadata, checkpoint):
-        """Determina il frame mode dal checkpoint."""
+        """Determines frame mode from checkpoint."""
         if run_metadata and run_metadata.get("frame_mode"):
             return run_metadata["frame_mode"].lower()
         if "frame_mode" in checkpoint:
             return str(checkpoint["frame_mode"]).lower()
-        # Inferisci dai canali di input
+        # Infer from input channels
         state_dict = checkpoint.get("model_state_dict", {})
         inferred_channels = GAILAgent._infer_input_channels(state_dict)
         return "stacked" if inferred_channels and inferred_channels >= 6 else "single"
 
     @staticmethod
     def _infer_input_channels(state_dict):
-        """Inferisce i canali di input dal state_dict."""
+        """Infers input channels from state_dict."""
         if not state_dict:
             return None
         conv_keys = ["cnn.0.weight", "patch_embed.weight"]
@@ -201,19 +199,19 @@ class GAILAgent:
         return None
 
     def _prepare_state(self, observation):
-        """Prepara lo stato usando lo stesso preprocessor del training GAIL."""
+        """Prepares the state using the same preprocessor as GAIL training."""
         # Usa il preprocessor di GAIL che gestisce il frame stacking
         processed = self.preprocessor(observation)
         processed = processed.to(self.device)
-        # Aggiungi batch dimension se necessaria
+        # Add batch dimension if needed
         if processed.dim() == 3:
             processed = processed.unsqueeze(0)
         return processed
 
     def play_episode(self, env, epsilon=0.0, max_steps=10000):
-        """Gioca un episodio completo usando la logica di GAIL."""
+        """Plays a complete episode using GAIL logic."""
         observation, info = env.reset()
-        self.preprocessor.reset()  # Reset del frame buffer
+        self.preprocessor.reset()  # Reset frame buffer
         state = self._prepare_state(observation)
 
         total_reward = 0
@@ -222,7 +220,7 @@ class GAILAgent:
         truncated = False
 
         while not (done or truncated) and steps < max_steps:
-            # Seleziona azione usando la funzione di GAIL
+            # Select action using GAIL function
             with torch.no_grad():
                 action = select_action(
                     self.policy,
@@ -231,7 +229,7 @@ class GAILAgent:
                     output_type=self.policy_output_type,
                 )
 
-            # Esegui azione
+            # Execute action
             observation, reward, done, truncated, info = env.step(action)
             total_reward += reward
             steps += 1
@@ -242,10 +240,10 @@ class GAILAgent:
         return total_reward, steps
 
     def log_evaluation(self, evaluation_summary, episode_rewards, episode_lengths):
-        """Salva i risultati della valutazione nel CSV associato al run."""
+        """Saves evaluation results to the CSV associated with the run."""
         if not self.metrics_csv_path:
             print(
-                "[AVVISO] Nessun CSV di metriche associato al modello. Salvataggio valutazione saltato."
+                "[WARNING] No metrics CSV associated with the model. Evaluation save skipped."
             )
             return
         episode_metrics = [
@@ -273,16 +271,16 @@ class GAILAgent:
 
 
 def evaluate_agent(agent, num_episodes=10, render_mode="human", epsilon=0.0):
-    """Valuta l'agente su multiple partite."""
+    """Evaluates the agent over multiple games."""
     env = make_space_invaders_env(render_mode=render_mode)
 
     print(f"\n{'='*50}")
-    print(f"VALUTAZIONE GAIL AGENT - {num_episodes} episodi")
+    print(f"GAIL AGENT EVALUATION - {num_episodes} episodes")
     print(f"{'='*50}\n")
     if render_mode == "human":
-        print("Modalità: rendering attivo (più lento, visibile)")
+        print("Mode: rendering active (slower, visible)")
     else:
-        print("Modalità: headless (nessun rendering, massima velocità)")
+        print("Mode: headless (no rendering, maximum speed)")
     print(f"Epsilon: {epsilon}")
     print()
 
@@ -294,22 +292,22 @@ def evaluate_agent(agent, num_episodes=10, render_mode="human", epsilon=0.0):
         episode_rewards.append(reward)
         episode_lengths.append(steps)
 
-        print(f"Episodio {i+1}/{num_episodes} - Reward: {reward:.0f}, Steps: {steps}")
+        print(f"Episode {i+1}/{num_episodes} - Reward: {reward:.0f}, Steps: {steps}")
 
     env.close()
 
-    # Statistiche
+    # Statistics
     mean_reward = np.mean(episode_rewards)
     std_reward = np.std(episode_rewards)
     min_reward = np.min(episode_rewards)
     max_reward = np.max(episode_rewards)
     mean_steps = np.mean(episode_lengths)
     print(f"\n{'='*50}")
-    print("RISULTATI VALUTAZIONE")
+    print("EVALUATION RESULTS")
     print(f"{'='*50}")
-    print(f"Reward medio: {mean_reward:.2f} ± {std_reward:.2f}")
-    print(f"Reward min/max: {min_reward:.0f} / {max_reward:.0f}")
-    print(f"Durata media episodi: {mean_steps:.0f} steps")
+    print(f"Average reward: {mean_reward:.2f} ± {std_reward:.2f}")
+    print(f"Min/max reward: {min_reward:.0f} / {max_reward:.0f}")
+    print(f"Average episode duration: {mean_steps:.0f} steps")
     print(f"{'='*50}\n")
 
     evaluation_summary = {
@@ -328,12 +326,12 @@ def evaluate_agent(agent, num_episodes=10, render_mode="human", epsilon=0.0):
 
 
 def prompt_render_choice(default_show=True):
-    """Chiede all'utente se visualizzare il gameplay durante la valutazione."""
+    """Asks the user whether to display the gameplay during evaluation."""
     default_text = "S" if default_show else "N"
     while True:
         choice = (
             input(
-                f"Visualizzare il gameplay durante la valutazione? [s/n] (default: {default_text}): "
+                f"Display gameplay during evaluation? [y/n] (default: {default_text}): "
             )
             .strip()
             .lower()
@@ -344,32 +342,32 @@ def prompt_render_choice(default_show=True):
             return "human"
         if choice in {"n", "no"}:
             return None
-        print("Input non valido. Rispondi con 's' o 'n'.")
+        print("Invalid input. Answer with 'y' or 'n'.")
 
 
 def prompt_epsilon():
-    """Chiede epsilon per esplorazione."""
+    """Asks for epsilon for exploration."""
     while True:
-        eps_input = input("Epsilon per esplorazione [default: 0.0 = greedy]: ").strip()
+        eps_input = input("Epsilon for exploration [default: 0.0 = greedy]: ").strip()
         if not eps_input:
             return 0.0
         try:
             eps = float(eps_input)
             if 0.0 <= eps <= 1.0:
                 return eps
-            print("Epsilon deve essere tra 0.0 e 1.0")
+            print("Epsilon must be between 0.0 and 1.0")
         except ValueError:
-            print("Inserisci un numero valido.")
+            print("Enter a valid number.")
 
 
 def play_interactively(agent):
-    """Gioca un episodio interattivo mostrando le azioni dell'agente."""
+    """Plays an interactive episode showing the agent's actions."""
     env = make_space_invaders_env(render_mode="human")
 
     action_names = ["NOOP", "FIRE", "RIGHT", "LEFT", "RIGHTFIRE", "LEFTFIRE"]
 
-    print("\n=== MODALITÀ INTERATTIVA ===")
-    print("Premi ENTER per vedere l'agente giocare...")
+    print("\n=== INTERACTIVE MODE ===")
+    print("Press ENTER to watch the agent play...")
     input()
 
     observation, info = env.reset()
@@ -388,7 +386,7 @@ def play_interactively(agent):
                 epsilon=0.0,
                 output_type=agent.policy_output_type,
             )
-        print(f"Step {steps}: Azione = {action_names[action]}")
+        print(f"Step {steps}: Action = {action_names[action]}")
 
         observation, reward, done, truncated, info = env.step(action)
         total_reward += reward
@@ -399,31 +397,31 @@ def play_interactively(agent):
 
     env.close()
 
-    print(f"\nEpisodio completato!")
-    print(f"Reward totale: {total_reward}")
-    print(f"Durata: {steps} steps")
+    print(f"\nEpisode completed!")
+    print(f"Total reward: {total_reward}")
+    print(f"Duration: {steps} steps")
 
 
 def main():
-    """Funzione principale."""
+    """Main function."""
     data_manager = DataManager()
     model_path = select_model_file(data_manager)
     if model_path is None:
-        print("Nessun modello selezionato. Uscita.")
+        print("No model selected. Exiting.")
         return
 
-    # Crea agente
+    # Create agent
     agent = GAILAgent(model_path)
 
     # Menu
     while True:
-        print("\n=== VALUTAZIONE GAIL AGENT ===")
-        print("1. Valuta agente (30 episodi)")
-        print("2. Gioca episodio singolo (interattivo)")
-        print("3. Valutazione estesa (custom numero episodi)")
-        print("0. Esci")
+        print("\n=== GAIL AGENT EVALUATION ===")
+        print("1. Evaluate agent (30 episodes)")
+        print("2. Play single episode (interactive)")
+        print("3. Extended evaluation (custom number of episodes)")
+        print("0. Exit")
 
-        choice = input("\nScelta: ")
+        choice = input("\nChoice: ")
 
         if choice == "1":
             render_mode = prompt_render_choice()
@@ -434,7 +432,7 @@ def main():
         elif choice == "2":
             play_interactively(agent)
         elif choice == "3":
-            num_eps = int(input("Numero di episodi: "))
+            num_eps = int(input("Number of episodes: "))
             render_mode = prompt_render_choice()
             epsilon = prompt_epsilon()
             evaluate_agent(
@@ -443,9 +441,9 @@ def main():
         elif choice == "0":
             break
         else:
-            print("Scelta non valida!")
+            print("Invalid choice!")
 
-    print("\nArrivederci!")
+    print("\nGoodbye!")
 
 
 if __name__ == "__main__":

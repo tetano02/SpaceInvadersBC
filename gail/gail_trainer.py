@@ -6,9 +6,7 @@ PHASE 0 — PROJECT ANALYSIS
    • `BCPolicy` (three-layer CNN), `BCMLPPolicy` (fully-connected), and
      `BCVisionTransformer` (ViT) live in `behavioral_cloning.py` and all emit a
      tensor of shape (batch_size, num_actions). During BC training those logits
-     are consumed by `nn.CrossEntropyLoss`, meaning the existing forward pass can
-     serve either as class logits (policy-gradient style) or as Q-values by
-     interpreting the tensor as action-value estimates.
+     are consumed by `nn.CrossEntropyLoss` for supervised classification.
 2. Behavioral Cloning pipeline:
    • `BCDataset` iterates demonstrations stored as dictionaries with numpy arrays
      (`observations`, `actions`, `rewards`, `dones`). Observations are stacked or
@@ -27,16 +25,16 @@ PHASE 0 — PROJECT ANALYSIS
      next-state. This structure is leveraged by BC and will now be reused to
      build an expert replay buffer for GAIL.
 5. GAIL integration plan:
-   • Provide a policy-agnostic helper (`infer_policy_output_type` +
-     `select_action`) that routes between Q-learning style (epsilon-greedy over
-     Q-values) and policy-gradient style (categorical sampling from logits).
+   • Provide policy helpers (`infer_policy_output_type` + `select_action`)
+     that use categorical sampling from logits with optional epsilon-greedy
+     exploration.
    • Implement `Discriminator` (see `discriminator.py`) and a `GAILTrainer` that
      can: load BC checkpoints, convert demonstrations into transition batches,
      collect fresh trajectories from any Gym-compatible env, update the
-     discriminator, and update the policy with the appropriate loss function.
+     discriminator, and update the policy using policy gradient.
    • The trainer exposes modular methods (`collect_agent_trajectories`,
-     `update_discriminator`, `compute_gail_rewards`, and two distinct policy
-     update paths) so any current or future policy architecture can plug in.
+     `update_discriminator`, `compute_gail_rewards`, and policy gradient update)
+     so any policy architecture can plug in.
 =========================================================
 PHASE 1+ IMPLEMENTATION OVERVIEW
 =========================================================
@@ -186,20 +184,7 @@ class ReplayBuffer:
 
 
 def infer_policy_output_type(policy: nn.Module, explicit: Optional[str] = None) -> str:
-    """Infers whether a policy emits Q-values or logits.
-
-    Checks, in order: an explicit override, `policy_output_type`, `output_type`,
-    boolean flags like `returns_q_values`, and defaults to "logits".
-    """
-
-    if explicit:
-        return explicit.lower()
-    for attr in ("policy_output_type", "output_type"):
-        value = getattr(policy, attr, None)
-        if value:
-            return str(value).lower()
-    if getattr(policy, "returns_q_values", False):
-        return "q_values"
+    """Returns 'logits' as all policies emit logits for categorical distributions."""
     return "logits"
 
 
@@ -209,31 +194,26 @@ def select_action(
     epsilon: float = 0.0,
     output_type: Optional[str] = None,
 ) -> int:
-    """Selects an action using epsilon-greedy (Q) or categorical sampling (logits).
+    """Selects an action using categorical sampling from logits.
 
     Args:
-        policy: Any policy network producing (1, num_actions) outputs.
+        policy: Any policy network producing (1, num_actions) logits.
         state: Tensor with batch dimension first (1, C, H, W) or (1, D).
-        epsilon: Exploration probability for Q-value policies.
-        output_type: Optional override ("q_values" or "logits").
+        epsilon: Exploration probability (random action selection).
+        output_type: Unused, kept for backward compatibility.
     """
 
-    policy_mode = infer_policy_output_type(policy, explicit=output_type)
     policy_device = next(policy.parameters()).device
     state = state.to(policy_device)
     with torch.no_grad():
         outputs = policy(state)
     num_actions = outputs.shape[-1]
 
-    if policy_mode == "q_values":
-        if random.random() < epsilon:
-            return random.randrange(num_actions)
-        action = torch.argmax(outputs, dim=-1)
-        return int(action.item())
-
-    # Treat outputs as logits for a categorical distribution.
+    # Epsilon-greedy exploration
     if epsilon > 0.0 and random.random() < epsilon:
         return random.randrange(num_actions)
+
+    # Categorical sampling from logits
     probs = F.softmax(outputs, dim=-1)
     distribution = Categorical(probs=probs)
     action = distribution.sample()
@@ -246,7 +226,7 @@ def select_action(
 
 
 class GAILTrainer:
-    """Generic GAIL trainer supporting both Q-learning and policy-gradient policies."""
+    """GAIL trainer for policy-gradient policies using logits."""
 
     def __init__(
         self,
@@ -369,9 +349,9 @@ class GAILTrainer:
             next_state = self._prepare_state(next_obs)
 
             # Store compressed uint8 version in the buffer (values in [0, 255])
-            state_uint8 = (
-                state.squeeze(0).detach().cpu().clamp(0.0, 1.0) * 255.0
-            ).to(torch.uint8)
+            state_uint8 = (state.squeeze(0).detach().cpu().clamp(0.0, 1.0) * 255.0).to(
+                torch.uint8
+            )
             next_state_uint8 = (
                 next_state.squeeze(0).detach().cpu().clamp(0.0, 1.0) * 255.0
             ).to(torch.uint8)
@@ -475,11 +455,7 @@ class GAILTrainer:
         return rewards.detach()
 
     def update_policy(self, batch: dict, gail_rewards: torch.Tensor) -> dict:
-        """Delegates to the appropriate policy update rule."""
-
-        if self.policy_output_type == "q_values":
-            loss = self._update_policy_q_learning(batch, gail_rewards)
-            return {"policy_loss": loss, "mode": "q_learning"}
+        """Updates the policy using policy gradient."""
         loss = self._update_policy_policy_gradient(batch, gail_rewards)
         return {"policy_loss": loss, "mode": "policy_gradient"}
 
@@ -885,9 +861,9 @@ class GAILTrainer:
             encoded_states: List[torch.Tensor] = []
             for obs in observations:
                 float_tensor = self.state_preprocessor(obs)  # float32 in [0, 1]
-                uint8_tensor = (
-                    float_tensor.detach().cpu().clamp(0.0, 1.0) * 255.0
-                ).to(torch.uint8)
+                uint8_tensor = (float_tensor.detach().cpu().clamp(0.0, 1.0) * 255.0).to(
+                    torch.uint8
+                )
                 encoded_states.append(uint8_tensor)
 
             if not encoded_states:
@@ -923,18 +899,10 @@ class GAILTrainer:
         rewards_list = [t.env_reward for t in transitions]
 
         # Decode uint8 states to float32 in [0, 1] directly on target device
-        states = (
-            torch.stack(states_list)
-            .to(self.device)
-            .to(torch.float32)
-            / 255.0
-        )
+        states = torch.stack(states_list).to(self.device).to(torch.float32) / 255.0
         actions = torch.tensor(actions_list, dtype=torch.long, device=self.device)
         next_states = (
-            torch.stack(next_states_list)
-            .to(self.device)
-            .to(torch.float32)
-            / 255.0
+            torch.stack(next_states_list).to(self.device).to(torch.float32) / 255.0
         )
         dones = torch.tensor(dones_list, dtype=torch.float32, device=self.device)
         rewards = torch.tensor(rewards_list, dtype=torch.float32, device=self.device)
@@ -949,28 +917,6 @@ class GAILTrainer:
             "dones": dones,
             "env_rewards": rewards,
         }
-
-    def _update_policy_q_learning(
-        self, batch: dict, gail_rewards: torch.Tensor
-    ) -> float:
-        states = batch["states"].to(self.device)
-        actions = batch["actions"].to(self.device)
-        next_states = batch["next_states"].to(self.device)
-        dones = batch["dones"].to(self.device)
-        gail_rewards = gail_rewards.to(self.device).squeeze(-1)
-
-        q_values = self.policy(states)
-        current_q = q_values.gather(1, actions.unsqueeze(-1)).squeeze(-1)
-        with torch.no_grad():
-            next_q = self.policy(next_states)
-            max_next_q = next_q.max(dim=1).values
-            targets = gail_rewards + self.gamma * (1.0 - dones) * max_next_q
-        loss = F.mse_loss(current_q, targets)
-        self.policy_optimizer.zero_grad()
-        loss.backward()
-        nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-        self.policy_optimizer.step()
-        return float(loss.item())
 
     def _update_policy_policy_gradient(
         self, batch: dict, gail_rewards: torch.Tensor
@@ -1121,7 +1067,6 @@ def main(demo_files=None, model_files=None):
     policy = build_policy(
         model_type=model_type, num_actions=num_actions, in_channels=input_channels
     )
-    policy_mode = "q_values" if model_type.lower() == "dqn" else "logits"
     preprocessor = FrameStackPreprocessor(stack_size=stack_size)
     discriminator = Discriminator(
         observation_shape=observation_shape, num_actions=num_actions
@@ -1135,9 +1080,7 @@ def main(demo_files=None, model_files=None):
     disc_updates = prompt_int_input(
         "Discriminator updates per iteration [default: 2]: ", 2
     )
-    policy_updates = prompt_int_input(
-        "Policy updates per iteration [default: 1]: ", 1
-    )
+    policy_updates = prompt_int_input("Policy updates per iteration [default: 1]: ", 1)
     epsilon = prompt_float_input("Exploration epsilon [default: 0.05]: ", 0.05)
     buffer_capacity = prompt_int_input(
         "Agent buffer capacity [default: 50000]: ", 50000
@@ -1162,13 +1105,9 @@ def main(demo_files=None, model_files=None):
     print("Starting model baseline (BC)")
     print("=" * 60)
     print("Enter the average performance of the BC model to use as baseline.")
-    print(
-        "(Leave empty to start from -inf, any model will be considered better)"
-    )
+    print("(Leave empty to start from -inf, any model will be considered better)")
 
-    baseline_input = input(
-        "BC model MeanReturn [default: no baseline]: "
-    ).strip()
+    baseline_input = input("BC model MeanReturn [default: no baseline]: ").strip()
 
     baseline_mean = None
     if baseline_input:
@@ -1179,9 +1118,7 @@ def main(demo_files=None, model_files=None):
         except ValueError:
             print("Invalid value. No baseline set.\n")
     else:
-        print(
-            "No baseline set. Any improvement will be considered best.\n"
-        )
+        print("No baseline set. Any improvement will be considered best.\n")
 
     trainer = GAILTrainer(
         policy=policy,
@@ -1189,7 +1126,6 @@ def main(demo_files=None, model_files=None):
         env=env,
         expert_files=selected_demo_files,
         bc_checkpoint_path=model_path,
-        policy_output_type=policy_mode,
         state_preprocessor=preprocessor,
         agent_buffer_capacity=buffer_capacity,
         device=device,

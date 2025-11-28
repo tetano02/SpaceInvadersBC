@@ -231,7 +231,7 @@ def prompt_model_type(default: str = DEFAULT_MODEL_TYPE):
     print("Choose by entering the number or press ENTER for default.")
 
     while True:
-        choice = input("Modello: ").strip()
+        choice = input("Model: ").strip()
         if not choice:
             return default
         if choice.isdigit():

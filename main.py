@@ -1,6 +1,6 @@
 """
-Main script per il progetto di Behavioral Cloning su Space Invaders.
-Permette di raccogliere dimostrazioni, addestrare il modello e valutare la policy.
+Main script for the Behavioral Cloning project on Space Invaders.
+Allows collecting demonstrations, training the model, and evaluating the policy.
 """
 
 from pathlib import Path
@@ -9,7 +9,7 @@ import sys
 
 
 def print_banner():
-    """Stampa il banner del progetto."""
+    """Prints the project banner."""
     print("\n" + "=" * 60)
     print("  BEHAVIORAL CLONING - Space Invaders")
     # print("  CTRL+C - CTRL+PAC")
@@ -17,7 +17,7 @@ def print_banner():
 
 
 def check_demonstrations():
-    """Controlla se esistono dimostrazioni."""
+    """Checks if demonstrations exist."""
     demo_dir = Path("data/demonstrations")
     if not demo_dir.exists():
         return False, []
@@ -26,7 +26,7 @@ def check_demonstrations():
 
 
 def check_models():
-    """Controlla se esistono modelli addestrati."""
+    """Checks if trained models exist."""
     model_dir = Path("data/models")
     if not model_dir.exists():
         return False, []
@@ -35,26 +35,26 @@ def check_models():
 
 
 def prompt_int_input(message: str, default: int) -> int:
-    """Richiede un intero con default."""
+    """Prompts for an integer with default value."""
     raw = input(message).strip()
     if not raw:
         return default
     try:
         return int(raw)
     except ValueError:
-        print(f"Input non valido. Uso il valore di default ({default}).")
+        print(f"Invalid input. Using default value ({default}).")
         return default
 
 
 def prompt_float_input(message: str, default: float) -> float:
-    """Richiede un float con default."""
+    """Prompts for a float with default value."""
     raw = input(message).strip()
     if not raw:
         return default
     try:
         return float(raw)
     except ValueError:
-        print(f"Input non valido. Uso il valore di default ({default}).")
+        print(f"Invalid input. Using default value ({default}).")
         return default
 
 def main():
