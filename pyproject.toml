@@ -15,6 +15,7 @@ dependencies = [
     "torchvision==0.21.0",
     "torchaudio==2.6.0",
     "setuptools<81",
+    "pandas>=2.3.3",
 ]
 
 [[tool.uv.index]]
