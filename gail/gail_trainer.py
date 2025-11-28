@@ -106,10 +106,8 @@ def default_state_preprocessor(observation: np.ndarray | torch.Tensor) -> torch.
         return tensor
     except (RuntimeError, MemoryError) as e:
         if "not enough memory" in str(e) or isinstance(e, MemoryError):
-            # Force garbage collection and retry
+            # Force garbage collection and abort with a clear message
             gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             raise RuntimeError(
                 f"Out of memory in state preprocessing. Try reducing buffer capacity or batch size. Original error: {e}"
             )
@@ -149,12 +147,17 @@ class FrameStackPreprocessor:
 
 @dataclass
 class Transition:
-    """Stores a single transition for replay buffers."""
+    """Stores a single transition for replay buffers.
 
-    state: torch.Tensor  # (C, H, W) or (D,)
+    Note: `state` and `next_state` are stored as uint8 tensors in [0, 255]
+    to reduce memory usage and converted back to float32 in
+    `_transitions_to_batch`.
+    """
+
+    state: torch.Tensor  # (C, H, W) or (D,), stored as uint8
     action: int
     env_reward: float
-    next_state: torch.Tensor  # matches state shape
+    next_state: torch.Tensor  # matches state shape, stored as uint8
     done: bool
 
 
@@ -173,7 +176,8 @@ class ReplayBuffer:
 
     def sample(self, batch_size: int) -> List[Transition]:
         batch_size = min(batch_size, len(self.buffer))
-        return random.sample(list(self.buffer), batch_size)
+        # random.sample works directly on a deque; no need to cast to list
+        return random.sample(self.buffer, batch_size)
 
 
 # -----------------------------------------------------------------------------
@@ -364,11 +368,19 @@ class GAILTrainer:
             done = bool(terminated or truncated)
             next_state = self._prepare_state(next_obs)
 
+            # Store compressed uint8 version in the buffer (values in [0, 255])
+            state_uint8 = (
+                state.squeeze(0).detach().cpu().clamp(0.0, 1.0) * 255.0
+            ).to(torch.uint8)
+            next_state_uint8 = (
+                next_state.squeeze(0).detach().cpu().clamp(0.0, 1.0) * 255.0
+            ).to(torch.uint8)
+
             transition = Transition(
-                state=state.squeeze(0).detach().cpu(),
+                state=state_uint8,
                 action=int(action),
                 env_reward=float(reward),
-                next_state=next_state.squeeze(0).detach().cpu(),
+                next_state=next_state_uint8,
                 done=done,
             )
             self.agent_buffer.push(transition)
@@ -378,12 +390,6 @@ class GAILTrainer:
 
             # Free memory of previous state
             del state
-
-            # Periodic memory cleanup every 500 steps
-            if steps_collected % 500 == 0:
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
 
             if done:
                 episode_rewards.append(episode_return)
@@ -489,8 +495,6 @@ class GAILTrainer:
         """
         # Memory cleanup before validation
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
         episode_rewards = []
 
@@ -527,8 +531,6 @@ class GAILTrainer:
             # Periodic cleanup every 10 episodes
             if (episode_idx + 1) % 10 == 0:
                 gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
 
         mean_return = sum(episode_rewards) / len(episode_rewards)
         # Calculate standard deviation
@@ -630,11 +632,8 @@ class GAILTrainer:
                 # Clean memory AFTER recording metrics
                 del agent_batch, gail_rewards, disc_losses
 
-                # Clean CUDA cache every iteration
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
-                gc.collect()  # Force garbage collection
+                # Force garbage collection once per iteration
+                gc.collect()
 
                 # If training mean suggests improvement (or within 10% of best), validate thoroughly
                 threshold = self.best_mean_return * 0.9  # 10% below best
@@ -885,8 +884,11 @@ class GAILTrainer:
             dones = episode.get("dones")
             encoded_states: List[torch.Tensor] = []
             for obs in observations:
-                tensor = self.state_preprocessor(obs)
-                encoded_states.append(tensor.detach().cpu().clone())
+                float_tensor = self.state_preprocessor(obs)  # float32 in [0, 1]
+                uint8_tensor = (
+                    float_tensor.detach().cpu().clamp(0.0, 1.0) * 255.0
+                ).to(torch.uint8)
+                encoded_states.append(uint8_tensor)
 
             if not encoded_states:
                 continue
@@ -920,10 +922,20 @@ class GAILTrainer:
         dones_list = [t.done for t in transitions]
         rewards_list = [t.env_reward for t in transitions]
 
-        # Create tensors directly on target device
-        states = torch.stack(states_list).to(self.device)
+        # Decode uint8 states to float32 in [0, 1] directly on target device
+        states = (
+            torch.stack(states_list)
+            .to(self.device)
+            .to(torch.float32)
+            / 255.0
+        )
         actions = torch.tensor(actions_list, dtype=torch.long, device=self.device)
-        next_states = torch.stack(next_states_list).to(self.device)
+        next_states = (
+            torch.stack(next_states_list)
+            .to(self.device)
+            .to(torch.float32)
+            / 255.0
+        )
         dones = torch.tensor(dones_list, dtype=torch.float32, device=self.device)
         rewards = torch.tensor(rewards_list, dtype=torch.float32, device=self.device)
 
