@@ -22,7 +22,7 @@ MODEL_COLORS = {
 def _prepare_frame(csv_path: pathlib.Path) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
     df.columns = df.columns.str.strip()
-    
+
     df["Dataset"] = df["Dataset"].str.strip().str.title()
     df["Model"] = df["Model"].str.strip().str.upper()
     df["Batch Size"] = df["Batch Size"].astype(int)
@@ -71,25 +71,6 @@ def _plot_dataset_panel(
             linewidth=0.8,
         )
 
-        # Indicate min/max with short horizontal segments for quick reference.
-        valid_min = ~min_vals.isna()
-        ax.hlines(
-            min_vals[valid_min],
-            positions[valid_min] - bar_width / 2,
-            positions[valid_min] + bar_width / 2,
-            colors="red",
-            linewidth=2,
-        )
-
-        valid_max = ~max_vals.isna()
-        ax.hlines(
-            max_vals[valid_max],
-            positions[valid_max] - bar_width / 2,
-            positions[valid_max] + bar_width / 2,
-            colors="green",
-            linewidth=2,
-        )
-
     ax.set_title(dataset)
     ax.set_xticks(x_positions)
     ax.set_xticklabels([str(size) for size in batch_sizes])
@@ -102,8 +83,8 @@ def plot_rewards(csv_path: str | pathlib.Path) -> None:
     df = _prepare_frame(csv_path)
     batches = _sorted_batch_sizes(df)
 
-    output_dir = csv_path.parent / "plots"
-    output_dir.mkdir(exist_ok=True)
+    output_dir = csv_path.parent.parent / "plots" / "bc"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Combined plot
     fig, axes = plt.subplots(1, len(DATASET_ORDER), figsize=(15, 5), sharey=True)
@@ -124,7 +105,7 @@ def plot_rewards(csv_path: str | pathlib.Path) -> None:
     )
     fig.tight_layout(rect=(0, 0, 1, 0.88))
 
-    output_path = output_dir / "reward_distribution.png"
+    output_path = output_dir / "reward_BC.png"
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     print(f"Plot saved to {output_path}")
     plt.close(fig)
@@ -140,7 +121,12 @@ def plot_rewards(csv_path: str | pathlib.Path) -> None:
         fig_single.tight_layout()
 
         # Save individual plot
-        filename = f"reward_distribution_{dataset.lower().replace(' + ', '_')}.png"
+        filename_map = {
+            "Minari": "mina",
+            "Expert": "exp",
+            "Minari + Expert": "mina_exp",
+        }
+        filename = f"reward_BC_{filename_map[dataset]}.png"
         output_path_single = output_dir / filename
         fig_single.savefig(output_path_single, dpi=300, bbox_inches="tight")
         print(f"Plot saved to {output_path_single}")
@@ -149,5 +135,5 @@ def plot_rewards(csv_path: str | pathlib.Path) -> None:
 
 
 if __name__ == "__main__":
-    default_csv = pathlib.Path(__file__).with_name("reward.csv")
+    default_csv = pathlib.Path(__file__).parent / "data_training" / "reward_BC.csv"
     plot_rewards(default_csv)

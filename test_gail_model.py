@@ -327,7 +327,7 @@ def evaluate_agent(agent, num_episodes=10, render_mode="human", epsilon=0.0):
 
 def prompt_render_choice(default_show=True):
     """Asks the user whether to display the gameplay during evaluation."""
-    default_text = "S" if default_show else "N"
+    default_text = "Y" if default_show else "N"
     while True:
         choice = (
             input(
