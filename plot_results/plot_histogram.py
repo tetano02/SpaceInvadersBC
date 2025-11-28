@@ -111,9 +111,9 @@ def plot_rewards(csv_path: str | pathlib.Path) -> None:
     for idx, (ax, dataset) in enumerate(zip(axes, DATASET_ORDER)):
         _plot_dataset_panel(ax, df, dataset, batches, add_legend_labels=(idx == 0))
 
-    axes[0].set_ylabel("Reward Medio")
+    axes[0].set_ylabel("Mean Reward")
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.suptitle("Reward distribution by dataset and batch size", y=0.98)
+    # fig.suptitle("Reward distribution by dataset and batch size", y=0.98)
     fig.legend(
         handles,
         labels,
@@ -134,7 +134,7 @@ def plot_rewards(csv_path: str | pathlib.Path) -> None:
         fig_single, ax_single = plt.subplots(figsize=(6, 5))
         _plot_dataset_panel(ax_single, df, dataset, batches, add_legend_labels=True)
 
-        ax_single.set_ylabel("Reward Medio")
+        ax_single.set_ylabel("Mean Reward")
         ax_single.legend(loc="upper right", frameon=True)
         ax_single.set_title(f"Reward distribution - {dataset}")
         fig_single.tight_layout()
